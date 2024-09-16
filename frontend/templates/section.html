@@ -1,0 +1,38 @@
+{% extends 'layout/base.html' %}
+{% load static %}
+
+{% block navbar %}
+
+{% include 'components/navbar.html' %}
+
+{% endblock %}
+
+{% block content %}
+
+<div class="section">
+    <img class="image" src="{{ section.imageUrl }}" alt="Image">
+    <div class="title">{{ section.name }}</div>
+    <div class="content-header">О курсе</div>
+    <div class="content">
+        <div class="content-name">Место:&nbsp;</div>
+        <div class="content-value">{{ section.location }}</div>
+    </div>
+    <div class="content">
+        <div class="content-name">Дата и время:&nbsp;</div>
+        <div class="content-value">{{ section.instructor }}</div>
+    </div>
+    <div class="content">
+        <div class="content-name">Преподаватель:&nbsp;</div>
+        <div class="content-value">{{ section.date }}</div>
+    </div>
+    <div class="content">
+        <div class="content-name">Длительность занятия:&nbsp;</div>
+        <div class="content-value">{{ section.duration }}</div>
+    </div>
+    <div class="content">
+        <div class="content-name">Описание:&nbsp;</div>
+        <div class="content-value">{{ section.description }}</div>
+    </div>
+</div>
+
+{% endblock %}

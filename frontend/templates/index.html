@@ -1,0 +1,41 @@
+{% extends 'layout/base.html' %}
+{% load static %}
+
+{% block navbar %}
+
+{% include 'components/navbar.html' %}
+
+{% endblock %}
+
+{% block content %}
+
+<div class="top-container">
+    <div class="title">На этой неделе</div>
+
+    <div class="horizontal-container">
+        <form method="GET" action="">
+            <input class="search-bar" type="text" name="section_name" placeholder="Поиск по названию" value="{{ request.GET.section_name }}">
+        </form>
+
+        <div class="button-container">
+            <button class="button" onClick="location.href='{% url 'application' application.id %}'">
+                ЗАЯВКА
+                <div class="badge">
+                    <div class="background">
+                        {{ application.sections|length }}
+                    </div>
+                </div>
+            </button>
+        </div>
+    </div>
+</div>
+
+<div class="grid-container">
+    {% for section in sections %}
+            {% include 'components/card.html' %}
+        {% empty %}
+            <div>Такого курса на этой неделе не будет</div>
+    {% endfor %}
+</div>
+
+{% endblock %}

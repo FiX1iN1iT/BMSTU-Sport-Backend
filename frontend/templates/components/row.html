@@ -1,0 +1,13 @@
+{% load static %}
+
+<a class="application-cell" href="{% url 'section' section_id=section.id %}">
+    <img class="image" src="{{ section.imageUrl }}" alt="Image">
+    <div class="content">
+        <div class="card-title">{{ section.name }}</div>
+        <div class="card-location">{{ section.location }}</div>
+        <div class="card-date">{{ section.date }}</div>
+    </div>
+    <div class="position-container">
+        <div class="position">{{ section.id }}</div>
+    </div>
+</a>
