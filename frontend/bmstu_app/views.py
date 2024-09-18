@@ -64,10 +64,31 @@ sections = [
   mockSection5,
 ]
 
+mock_section_order_1 = [
+   {
+      'id': 1,
+      'id_application': 1,
+      'id_section': 1,
+      'order_number': 1
+   },
+   {
+      'id': 2,
+      'id_application': 1,
+      'id_section': 2,
+      'order_number': 3
+   },
+   {
+      'id': 3,
+      'id_application': 1,
+      'id_section': 3,
+      'order_number': 2
+   },
+]
+
 mock_application_1 = {
     'id': 1,
     'fio': '',
-    'sections': [mockSection1, mockSection2, mockSection3],
+    'section_order': mock_section_order_1,
 }
 
 applications = [
@@ -108,6 +129,22 @@ def application(request, application_id):
     
     if searched_application == None:
       return
-  
-    context = searched_application
+
+    sorted_sections_order = sorted(searched_application['section_order'], key=lambda dict: dict['order_number'])
+
+    sorted_sections = []
+    index = 0
+    for sorted_section_order in sorted_sections_order:
+      index += 1
+      for section in sections:
+        if sorted_section_order['id'] == section['id']:
+            sorted_sections.append({ 'section': section, 'index': index })
+            break
+
+    context = {
+      'id': searched_application['id'],
+      'fio': searched_application['fio'],
+      'sections': sorted_sections,
+    }
+
     return render(request, 'application.html', context)
