@@ -1,102 +1,37 @@
-from django.shortcuts import render
-from django.conf import settings
+from django.shortcuts import render, redirect
+from django.views.decorators.http import require_POST, require_GET
 
-sections = [
-  {
-  'id': 1,
-  'name': 'Футбол для начинающих',
-  'description': 'Курс для тех, кто только начинает заниматься футболом.',
-  'location': 'Футбольное поле СК',
-  'date': 'Понедельник, 16:00',
-  'instructor': 'Иванова Елена Петровна',
-  'duration': '1,5 часа',
-  'imageUrl': 'http://127.0.0.1:9000/bmstu-sport/football.png'
-},
-  {
-  'id': 2,
-  'name': 'Баскетбол \'Техника бросков\'',
-  'description': 'Курс по совершенствованию техники бросков в баскетболе.',
-  'location': 'СК МГТУ',
-  'date': 'Среда, 15:00',
-  'instructor': 'Иванова Елена Петровна',
-  'duration': '1,5 часа',
-  'imageUrl': 'http://127.0.0.1:9000/bmstu-sport/basketball.png'
-},
-  {
-  'id': 3,
-  'name': 'Хоккей',
-  'description': 'Курс по улучшению техники плавания на стиле брасса.',
-  'location': 'Измайлово',
-  'date': 'Вторник, 12:00',
-  'instructor': 'Иванова Елена Петровна',
-  'duration': '1,5 часа',
-  'imageUrl': 'http://127.0.0.1:9000/bmstu-sport/hockey.png'
-},
-  {
-  'id': 4,
-  'name': 'Картинг',
-  'description': 'Курс по обучению хип-хоп танцам для детей 6-10 лет.',
-  'location': 'Измайлово',
-  'date': 'Пятница, 18:00',
-  'instructor': 'Иванова Елена Петровна',
-  'duration': '1,5 часа',
-  'imageUrl': 'http://127.0.0.1:9000/bmstu-sport/racing.png'
-},
-  {
-  'id': 5,
-  'name': 'Подготовка к марафону',
-  'description': 'Курс для тех, кто только начинает заниматься фитнесом и строить мышцы.',
-  'location': 'Манеж СК',
-  'date': 'Среда, 13:00',
-  'instructor': 'Иванова Елена Петровна',
-  'duration': '1,5 часа',
-  'imageUrl': 'http://127.0.0.1:9000/bmstu-sport/cycling.png'
-},
-]
+from django.db import connection
 
-mock_application_1 = {
-    'id': 1,
-    'fio': '',
-    'section_order': [
-   {
-      'id': 1,
-      'id_application': 1,
-      'id_section': 1,
-      'order_number': 1
-   },
-   {
-      'id': 2,
-      'id_application': 1,
-      'id_section': 2,
-      'order_number': 3
-   },
-   {
-      'id': 3,
-      'id_application': 1,
-      'id_section': 3,
-      'order_number': 2
-   },
-]
-}
+from django.contrib.auth.models import User
+from bmstu_app.models import Section, Application, Priority
 
+
+@require_GET
 def index(request):
-    search_query = request.GET.get('section_name', '')
-    filtered_sections = [section for section in sections if search_query.lower() in section['name'].lower()]
-    application_sections_size = len(mock_application_1['section_order'])
+    search_query = request.GET.get('section_title', '')
+    all_sections = Section.objects.all()
+       
+    if search_query:
+       all_sections = all_sections.filter(title=search_query)
+
+    default_user = User.objects.get(id=2) # id = 1 is superuser
+    user_applications = Application.objects.filter(user=default_user)
+    draft_application = user_applications.filter(status='draft').first()
+
+    application_sections_size = Priority.objects.filter(application=draft_application).count()
     
     context = {
-        'sections': filtered_sections,
-        'application': mock_application_1,
+        'sections': all_sections,
+        'application': draft_application,
         'application_sections_counter': application_sections_size
     }
     return render(request, 'index.html', context)
 
+
+@require_GET
 def section(request, section_id):
-    searched_section = None
-    for section in sections:
-      if section['id'] == section_id:
-        searched_section = section
-        break
+    searched_section = Section.objects.filter(id=section_id).first
     
     if searched_section == None:
       return
@@ -106,22 +41,60 @@ def section(request, section_id):
     }
     return render(request, 'section.html', context)
 
-def application(request, application_id):
-    sorted_sections_order = sorted(mock_application_1['section_order'], key=lambda dict: dict['order_number'])
 
-    sorted_sections = []
-    index = 0
-    for sorted_section_order in sorted_sections_order:
-      index += 1
-      for section in sections:
-        if sorted_section_order['id'] == section['id']:
-            sorted_sections.append({ 'section': section, 'index': index })
-            break
+@require_GET
+def application(request):
+    default_user = User.objects.get(id=2) # id = 1 is superuser
+    user_applications = Application.objects.filter(user=default_user)
+    draft_application = user_applications.filter(status='draft').first()
+    priorities = Priority.objects.filter(application=draft_application).order_by('priority')
+
+    application_sections = []
+    for priority in priorities:
+      application_sections.append({ 'section': priority.section, 'index': priority.priority })
+
+    fio = ''
+    if draft_application.full_name is not None:
+       fio = draft_application.full_name
 
     context = {
-      'id': mock_application_1['id'],
-      'fio': mock_application_1['fio'],
-      'sections': sorted_sections,
+      'id': draft_application.id,
+      'fio': fio,
+      'sections': application_sections,
     }
 
     return render(request, 'application.html', context)
+
+
+@require_POST
+def add_section(request, section_id):
+    default_user = User.objects.get(id=2) # id = 1 is superuser
+    user_applications = Application.objects.filter(user=default_user)
+    draft_application = user_applications.filter(status='draft').first()
+
+    chosen_section = Section.objects.filter(id=section_id).first()
+
+    if not draft_application:
+        draft_application = Application.objects.create(user=default_user, status='draft')
+
+    priorities = Priority.objects.filter(application=draft_application)
+
+    if priorities.filter(section=chosen_section):
+       print('Эта секция уже добавлена в заявку')
+       return redirect('index')
+    
+    Priority.objects.create(application=draft_application, section=chosen_section, priority=priorities.count() + 1)
+
+    return redirect('index')
+
+
+@require_POST
+def set_application_deleted(request, application_id):
+    application = Application.objects.get(id=application_id)
+    priorities_counter = Priority.objects.filter(application=application).count()
+
+    with connection.cursor() as cursor:
+        cursor.execute("UPDATE application SET status = 'deleted', number_of_sections = %s WHERE id = %s", [priorities_counter, application_id])
+        print("Заявка удалена.")
+        
+    return redirect('index')

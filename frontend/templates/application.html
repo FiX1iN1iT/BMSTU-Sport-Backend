@@ -11,6 +11,17 @@
 
 <div class="top-container">
     <h1>Заявка #{{ id }}</h1>
+
+    <div class="horizontal-container">
+        <div class="delete-button-container">
+            <form action="{% url 'set_application_deleted' id %}" method="post">
+                {% csrf_token %}
+                <button class="delete-button" type="submit">
+                    Удалить заявку
+                </button>
+            </form>
+        </div>
+    </div>
 </div>
 
 <input class="fio-input" type="text" placeholder="Введите ФИО" value="{{ fio }}">

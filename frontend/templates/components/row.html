@@ -3,9 +3,9 @@
 <a class="application-cell" href="{% url 'section' section_id=item.section.id %}">
     <img class="image" src="{{ item.section.imageUrl }}" alt="Image">
     <div class="content">
-        <div class="card-title">{{ item.section.name }}</div>
+        <div class="card-title">{{ item.section.title }}</div>
         <div class="card-location">{{ item.section.location }}</div>
-        <div class="card-date">{{ item.section.date }}</div>
+        <div class="card-date">{{ item.section.date|date:"SHORT_DATE_FORMAT" }}</div>
     </div>
     <div class="position-container">
         <div class="position">{{ item.index }}</div>

@@ -14,18 +14,24 @@
 
     <div class="horizontal-container">
         <form method="GET" action="">
-            <input class="search-bar" type="text" name="section_name" placeholder="Поиск по названию" value="{{ request.GET.section_name }}">
+            <input class="search-bar" type="text" name="section_title" placeholder="Поиск по названию" value="{{ request.GET.section_title }}">
         </form>
 
         <div class="button-container">
-            <button class="button" onClick="location.href='{% url 'application' application.id %}'">
-                ЗАЯВКА
-                <div class="badge">
-                    <div class="background">
-                        {{ application_sections_counter }}
+            {% if application_sections_counter > 0 %}
+                <button class="button" onClick="location.href='{% url 'application' %}'">
+                    ЗАЯВКА
+                    <div class="badge">
+                        <div class="background">
+                            {{ application_sections_counter }}
+                        </div>
                     </div>
-                </div>
-            </button>
+                </button>
+            {% else %}
+                <button class="button" disabled>
+                    ЗАЯВКА
+                </button>
+            {% endif %}
         </div>
     </div>
 </div>

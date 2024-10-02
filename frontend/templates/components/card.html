@@ -1,10 +1,31 @@
 {% load static %}
 
-<a class="card" href="{% url 'section' section_id=section.id %}">
-    <img src="{{ section.imageUrl }}" alt="Image">
-    <div class="card-content">
-        <div class="card-title">{{ section.name }}</div>
-        <div class="card-location">{{ section.location }}</div>
-        <div class="card-date">{{ section.date }}</div>
+{% comment %} <div class="card">
+    <form action="{% url 'add_section' section_id=section.id %}" method="post">
+        {% csrf_token %}
+        <button type="submit" class="card-button">+</button>
+    </form>
+    <a href="{% url 'section' section_id=section.id %}">
+        <img src="{{ section.imageUrl }}" alt="Image">
+        <div class="card-content">
+            <div class="card-title">{{ section.title }}</div>
+            <div class="card-location">{{ section.location }}</div>
+            <div class="card-date">{{ section.date|date:"SHORT_DATE_FORMAT" }}</div>
+        </div>
+    </a>
+</div> {% endcomment %}
+
+<div class="card">
+    <form action="{% url 'add_section' section_id=section.id %}" method="post">
+        {% csrf_token %}
+        <button type="submit" class="card-button">+</button>
+    </form>
+    <div>
+        <img src="{{ section.imageUrl }}" alt="Image">
+        <div class="card-content">
+            <a href="{% url 'section' section_id=section.id %}" class="card-title">{{ section.title }}</a>
+            <div class="card-location">{{ section.location }}</div>
+            <div class="card-date">{{ section.date|date:"SHORT_DATE_FORMAT" }}</div>
+        </div>
     </div>
-</a>
+</div>
