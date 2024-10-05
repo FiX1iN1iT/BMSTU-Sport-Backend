@@ -19,7 +19,7 @@
 
         <div class="button-container">
             {% if application_sections_counter > 0 %}
-                <button class="button" onClick="location.href='{% url 'application' %}'">
+                <button class="button" onClick="location.href='{% url 'application' application.id %}'">
                     ЗАЯВКА
                     <div class="badge">
                         <div class="background">

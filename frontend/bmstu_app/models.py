@@ -51,7 +51,7 @@ class Priority(models.Model):
     application = models.ForeignKey(Application, on_delete=models.CASCADE)
     section = models.ForeignKey(Section, on_delete=models.CASCADE)
 
-    priority = models.IntegerField()
+    priority = models.IntegerField(unique=True)
 
     class Meta:
         db_table = 'priority'

@@ -22,7 +22,7 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     path('', views.index, name='index'),
     path('section/<int:section_id>', views.section, name='section'),
-    path('application/', views.application, name='application'),
+    path('application/<int:application_id>', views.application, name='application'),
 
     path('add_section/<int:section_id>', views.add_section, name='add_section'),
     path('set_application_deleted/<int:application_id>', views.set_application_deleted, name='set_application_deleted'),

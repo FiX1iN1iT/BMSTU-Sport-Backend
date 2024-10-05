@@ -1,5 +1,7 @@
-from django.shortcuts import render, redirect
+from django.shortcuts import render, redirect, get_object_or_404
 from django.views.decorators.http import require_POST, require_GET
+
+from django.http import Http404
 
 from django.db import connection
 
@@ -10,7 +12,7 @@ from bmstu_app.models import Section, Application, Priority
 @require_GET
 def index(request):
     search_query = request.GET.get('section_title', '')
-    all_sections = Section.objects.all()
+    all_sections = Section.objects.filter(is_deleted=False)
        
     if search_query:
        all_sections = all_sections.filter(title=search_query)
@@ -19,7 +21,11 @@ def index(request):
     user_applications = Application.objects.filter(user=default_user)
     draft_application = user_applications.filter(status='draft').first()
 
-    application_sections_size = Priority.objects.filter(application=draft_application).count()
+    priorities = Priority.objects.filter(application=draft_application)
+    application_sections_size = 0
+    for priority in priorities:
+        if priority.section.is_deleted is False:
+           application_sections_size += 1
     
     context = {
         'sections': all_sections,
@@ -31,10 +37,10 @@ def index(request):
 
 @require_GET
 def section(request, section_id):
-    searched_section = Section.objects.filter(id=section_id).first
+    searched_section = get_object_or_404(Section, pk=section_id)
     
-    if searched_section == None:
-      return
+    if searched_section.is_deleted == True:
+      return Http404("Секция удалена")
     
     context = {
         'section': searched_section
@@ -43,22 +49,27 @@ def section(request, section_id):
 
 
 @require_GET
-def application(request):
-    default_user = User.objects.get(id=2) # id = 1 is superuser
-    user_applications = Application.objects.filter(user=default_user)
-    draft_application = user_applications.filter(status='draft').first()
-    priorities = Priority.objects.filter(application=draft_application).order_by('priority')
+def application(request, application_id):
+    application = get_object_or_404(Application, pk=application_id)
+
+    if application.status != 'draft':
+       raise Http404("Заявка не доступна для редактирования")
+
+    priorities = Priority.objects.filter(application=application).order_by('priority')
 
     application_sections = []
+    index = 1
     for priority in priorities:
-      application_sections.append({ 'section': priority.section, 'index': priority.priority })
+      if priority.section.is_deleted is False:
+        application_sections.append({ 'section': priority.section, 'index': index })
+        index += 1
 
     fio = ''
-    if draft_application.full_name is not None:
-       fio = draft_application.full_name
+    if application.full_name is not None:
+       fio = application.full_name
 
     context = {
-      'id': draft_application.id,
+      'id': application.id,
       'fio': fio,
       'sections': application_sections,
     }
@@ -72,7 +83,7 @@ def add_section(request, section_id):
     user_applications = Application.objects.filter(user=default_user)
     draft_application = user_applications.filter(status='draft').first()
 
-    chosen_section = Section.objects.filter(id=section_id).first()
+    chosen_section = Section.objects.get(pk=section_id)
 
     if not draft_application:
         draft_application = Application.objects.create(user=default_user, status='draft')
