@@ -1,5 +1,5 @@
 from django.contrib.auth.models import User
-from bmstu_app.models import Section, Application, Priority
+from bmstu_app.models import Section, Application
 from rest_framework import serializers
 
 
@@ -26,8 +26,3 @@ class ApplicationSerializer(serializers.ModelSerializer):
     class Meta:
         model = Application
         fields = ["pk", "status", "creation_date", "apply_date", "end_date", "full_name", "number_of_sections"]
-
-class PrioritySerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Priority
-        fields = ["pk", "priority"]
