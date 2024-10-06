@@ -37,7 +37,8 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    'bmstu_app'
+    'bmstu_app',
+    'rest_framework'
 ]
 
 MIDDLEWARE = [
@@ -133,3 +134,8 @@ STATICFILES_DIRS = [
     BASE_DIR / 'static'
 ]
 
+AWS_STORAGE_BUCKET_NAME = 'bmstu-sport'
+AWS_ACCESS_KEY_ID = 'minio'
+AWS_SECRET_ACCESS_KEY = 'minio124'
+AWS_S3_ENDPOINT_URL = 'localhost:9000'
+MINIO_USE_SSL = False

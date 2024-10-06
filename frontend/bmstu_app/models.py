@@ -7,10 +7,10 @@ class Section(models.Model):
     title = models.CharField(max_length=100, null=False)
     description = models.CharField(max_length=500, default="У этой секции нет описания", null=False)
     location = models.CharField(max_length=200, default="СК МГТУ", null=False)
-    date = models.DateTimeField(null=False)
-    instructor = models.CharField(max_length=100, null=False)
+    date = models.DateTimeField(default=timezone.now, null=False)
+    instructor = models.CharField(max_length=100, default="Петров Петр Петрович", null=False)
     duration = models.IntegerField(default=90, null=False)
-    imageUrl = models.URLField(null=False)
+    imageUrl = models.URLField(null=True, blank=True)
     is_deleted = models.BooleanField(default=False, null=False)
 
     class Meta:
@@ -51,7 +51,7 @@ class Priority(models.Model):
     application = models.ForeignKey(Application, on_delete=models.CASCADE)
     section = models.ForeignKey(Section, on_delete=models.CASCADE)
 
-    priority = models.IntegerField(unique=True)
+    priority = models.IntegerField()
 
     class Meta:
         db_table = 'priority'
