@@ -26,20 +26,6 @@ urlpatterns = [
     path('', include(router.urls)),
     path('api-auth/', include('rest_framework.urls', namespace='rest_framework')),
 
-    # path('', views.index, name='index'),
-    # path('section/<int:section_id>', views.section, name='section'),
-    # path('application/<int:application_id>', views.application, name='application'),
-
-    # path('add_section/<int:section_id>', views.add_section, name='add_section'),
-    # path('set_application_deleted/<int:application_id>', views.set_application_deleted, name='set_application_deleted'),
-
-    # path('', include(router.urls)),
-    # path(r'sections/', views.SectionList.as_view(), name='sections-list'),
-    # path(r'sections/<int:section_id>/', views.SectionDetail.as_view(), name='section-details'),
-    # path(r'sections/<int:section_id>/put/', views.put, name='section-put'),
-    # path('api-auth/', include('rest_framework.urls', namespace='rest_framework')),
-    # path(r'users/', views.UsersList.as_view(), name='users-list'),
-
     # Домен услуги
     path(r'sections/', views.SectionList.as_view(), name='sections-list'),
     path(r'sections/<int:section_id>/', views.SectionDetail.as_view(), name='section-details'),
@@ -48,7 +34,6 @@ urlpatterns = [
 
     # Домен заявки
     path(r'applications/', views.ApplicationList.as_view(), name='applications-list'),
-    # path(r'applications/<str:username>', views.ApplicationList.as_view(), name='user-applications-list'),
     path(r'applications/<int:application_id>/', views.ApplicationDetail.as_view(), name='application-details'),
     path(r'applications/<int:application_id>/submit/', views.ApplicationSubmit.as_view(), name='application-submit'),
     path(r'applications/<int:application_id>/approve-reject/', views.ApplicationApproveReject.as_view(), name='application-approve-reject'),

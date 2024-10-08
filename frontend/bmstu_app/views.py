@@ -29,7 +29,10 @@ class SectionList(APIView):
     application_serializer = ApplicationSerializer
 
     def get(self, request, format=None):
-        sections = self.section_class.objects.filter(is_deleted=False)        
+        sections = self.section_class.objects.filter(is_deleted=False)  
+        section_title = request.query_params.get('section_title')
+        if section_title:
+            sections = sections.filter(title__icontains=section_title)      
         serializer = self.section_serializer(sections, many=True)
 
         draft_application = self.application_class.objects.get(user=user(), status='draft')
@@ -103,16 +106,37 @@ class ApplicationList(APIView):
         user_instance = user()
         username = request.data['username']
         searched_user = User.objects.get(username=username)
-        if user_instance.is_staff == True:
-            applications = self.model_class.objects.filter(user=searched_user, moderator=user_instance).exclude(status__in=['deleted', 'draft'])
-            serializer = self.serializer_class(applications, many=True)
-            return Response(serializer.data)
+        
+        applications = self.model_class.objects.filter(user=searched_user).exclude(status__in=['deleted', 'draft'])
+        
+        if user_instance.is_staff:
+            status = request.query_params.get('status')
+            apply_date = request.query_params.get('apply_date')
+
+            if status:
+                applications = applications.filter(status=status)
+            if apply_date:
+                apply_date_datetime = timezone.datetime.fromisoformat(apply_date)
+                applications = applications.filter(apply_date__date=apply_date_datetime)
+
+            applications = applications.filter(moderator=user_instance)
+
         elif user_instance.username == username:
-                applications = self.model_class.objects.filter(user=user_instance).exclude(status__in=['deleted', 'draft'])
-                serializer = self.serializer_class(applications, many=True)
-                return Response(serializer.data)
+            status = request.query_params.get('status')
+            apply_date = request.query_params.get('apply_date')
+
+            if status:
+                applications = applications.filter(status=status)
+            if apply_date:
+                apply_date_datetime = timezone.datetime.fromisoformat(apply_date)
+                applications = applications.filter(apply_date__date=apply_date_datetime)
+
         else:
             return Response({"error": "Нет доступа к заявкам этого пользователя."}, status=status.HTTP_403_FORBIDDEN)
+
+        serializer = self.serializer_class(applications, many=True)
+        return Response(serializer.data)
+
 
     def post(self, request, format=None):
         user_instance = user()
@@ -121,7 +145,7 @@ class ApplicationList(APIView):
         section_id = request.data.get('section_id')
         section = get_object_or_404(Section, pk=section_id, is_deleted=False)
 
-        if Priority.objects.filter(application=draft_application, section=section) is not None:
+        if Priority.objects.filter(application=draft_application, section=section):
             return Response({"error": "Секция уже добавлена в текущую заявку"}, status=status.HTTP_400_BAD_REQUEST)
 
         current_priority = len(Priority.objects.filter(application=draft_application)) + 1
@@ -172,7 +196,7 @@ class ApplicationSubmit(APIView):
     def put(self, request, application_id, format=None):
         application = get_object_or_404(self.model_class, pk=application_id)
         application.status = 'created'
-        application.apply_date = timezone.now
+        application.apply_date = timezone.now().isoformat()
         application.save()
         return Response({"message": "Заявка сформирована"}, status=status.HTTP_204_NO_CONTENT)
     
@@ -186,9 +210,11 @@ class ApplicationApproveReject(APIView):
         if user_instance.is_staff == False:
             return Response({'error': 'Текущий пользователь не является модератором'}, status=status.HTTP_403_FORBIDDEN)
         application = get_object_or_404(self.model_class, pk=application_id)
+        if application.status != 'created':
+            return Response({'error': 'Заявка не может быть завершена до того, как перейдет в статус "Сформирована"'}, status=status.HTTP_403_FORBIDDEN)
         application.status = request.data['status']
         application.moderator = user_instance
-        application.end_date = timezone.now
+        application.end_date = timezone.now().isoformat()
 
         priorities = Priority.objects.filter(application=application)
 
@@ -200,12 +226,9 @@ class ApplicationApproveReject(APIView):
         application.number_of_sections = counter
 
         application.save()
-
         serializer = self.serializer_class(application)
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(serializer.data)
 
 
 class ApplicationPriority(APIView):
@@ -230,17 +253,18 @@ class ApplicationPriority(APIView):
         return Response({"message": "Приоритет удален"}, status=status.HTTP_204_NO_CONTENT)
     
     def put(self, request, application_id, format=None):
-        application = get_object_or_404(self.model_class, pk=application_id)
+        application = get_object_or_404(self.model_class, pk=application_id, status='draft')
         section_id = request.data['section_id']
         new_priority_value = request.data['priority_value']
         section = Section.objects.get(pk=section_id)
 
-        priority_to_change = Priority.objects.get(application=application, section=section)
+        priority_to_change = get_object_or_404(Priority, application=application, section=section)
+        priority_to_be_changed_with = get_object_or_404(Priority, application=application, priority=new_priority_value)
+
         old_priority_value = priority_to_change.priority
         priority_to_change.priority = new_priority_value
         priority_to_change.save()
 
-        priority_to_be_changed_with = Priority.objects.filter(application=application, priority=new_priority_value).exclude(section=section).first()
         priority_to_be_changed_with.priority = old_priority_value
         priority_to_be_changed_with.save()
 
