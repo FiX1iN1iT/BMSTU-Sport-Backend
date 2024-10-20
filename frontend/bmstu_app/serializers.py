@@ -1,5 +1,5 @@
 from django.contrib.auth.models import User
-from bmstu_app.models import Section, Application
+from bmstu_app.models import Section, SportApplication
 from rest_framework import serializers
 
 
@@ -19,10 +19,10 @@ class UserSerializer(serializers.ModelSerializer):
 class SectionSerializer(serializers.ModelSerializer):
     class Meta:
         model = Section
-        fields = ["pk", "title", "description", "location", "date", "instructor", "duration", "imageUrl", "is_deleted"]
+        fields = ["pk", "title", "description", "location", "date", "instructor", "duration", "imageUrl"]
 
 
-class ApplicationSerializer(serializers.ModelSerializer):
+class SportApplicationSerializer(serializers.ModelSerializer):
     class Meta:
-        model = Application
+        model = SportApplication
         fields = ["pk", "status", "creation_date", "apply_date", "end_date", "full_name", "number_of_sections"]

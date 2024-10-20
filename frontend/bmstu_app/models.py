@@ -20,7 +20,7 @@ class Section(models.Model):
         return f"Section '{self.id}':  '{self.title}' at '{self.date}'"
 
 
-class Application(models.Model):
+class SportApplication(models.Model):
     STATUS_CHOICES = [
         ('draft', 'Черновик'),
         ('deleted', 'Удалена'),
@@ -48,7 +48,7 @@ class Application(models.Model):
 
 
 class Priority(models.Model):
-    application = models.ForeignKey(Application, on_delete=models.CASCADE)
+    application = models.ForeignKey(SportApplication, on_delete=models.CASCADE)
     section = models.ForeignKey(Section, on_delete=models.CASCADE)
 
     priority = models.IntegerField()

@@ -39,7 +39,7 @@ urlpatterns = [
     path(r'applications/<int:application_id>/approve-reject/', views.ApplicationApproveReject.as_view(), name='application-approve-reject'),
 
     # Домен м-м
-    path(r'applications/<int:application_id>/priority/', views.ApplicationPriority.as_view(), name='application-priority'),
+    path(r'applications/<int:application_id>/priority/<int:section_id>', views.ApplicationPriority.as_view(), name='application-priority'),
 
     # Домен Пользователь
     path(r'register/', views.UserRegistration.as_view(), name='user-registration'),

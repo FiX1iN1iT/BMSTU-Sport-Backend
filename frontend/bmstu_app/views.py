@@ -5,8 +5,8 @@ from rest_framework import status, permissions
 from rest_framework.views import APIView
 
 from django.contrib.auth.models import User
-from bmstu_app.models import Section, Application, Priority
-from bmstu_app.serializers import UserSerializer, SectionSerializer, ApplicationSerializer
+from bmstu_app.models import Section, SportApplication, Priority
+from bmstu_app.serializers import UserSerializer, SectionSerializer, SportApplicationSerializer
 
 from django.contrib.auth import authenticate, login, logout
 from bmstu_app.minio import add_pic, delete_pic
@@ -25,8 +25,8 @@ def user():
 class SectionList(APIView):
     section_class = Section
     section_serializer = SectionSerializer
-    application_class = Application
-    application_serializer = ApplicationSerializer
+    application_class = SportApplication
+    application_serializer = SportApplicationSerializer
 
     def get(self, request, format=None):
         sections = self.section_class.objects.filter(is_deleted=False)  
@@ -35,12 +35,14 @@ class SectionList(APIView):
             sections = sections.filter(title__icontains=section_title)      
         serializer = self.section_serializer(sections, many=True)
 
-        draft_application = self.application_class.objects.get(user=user(), status='draft')
-        draft_application_id = ""
+        draft_application = self.application_class.objects.filter(user=user(), status='draft').first()
+        draft_application_id = 0
+        number_of_sections = 0
         if draft_application is not None:
             draft_application_id = draft_application.id
+            number_of_sections = len(Priority.objects.filter(application=draft_application))
 
-        return Response({'sections': serializer.data, 'draft_application_id': draft_application_id})
+        return Response({'sections': serializer.data, 'draft_application_id': draft_application_id, 'number_of_sections': number_of_sections})
 
     def post(self, request, format=None):
         serializer = self.section_serializer(data=request.data)
@@ -99,48 +101,29 @@ class SectionDetail(APIView):
 
 
 class ApplicationList(APIView):
-    model_class = Application
-    serializer_class = ApplicationSerializer
+    model_class = SportApplication
+    serializer_class = SportApplicationSerializer
 
     def get(self, request, format=None):
-        user_instance = user()
-        username = request.data['username']
-        searched_user = User.objects.get(username=username)
-        
-        applications = self.model_class.objects.filter(user=searched_user).exclude(status__in=['deleted', 'draft'])
-        
-        if user_instance.is_staff:
-            status = request.query_params.get('status')
-            apply_date = request.query_params.get('apply_date')
+        user_instance = user()        
+        applications = self.model_class.objects.filter(user=user_instance).exclude(status__in=['deleted', 'draft'])
 
-            if status:
-                applications = applications.filter(status=status)
-            if apply_date:
-                apply_date_datetime = timezone.datetime.fromisoformat(apply_date)
-                applications = applications.filter(apply_date__date=apply_date_datetime)
+        status = request.query_params.get('status')
+        apply_date = request.query_params.get('apply_date')
 
-            applications = applications.filter(moderator=user_instance)
-
-        elif user_instance.username == username:
-            status = request.query_params.get('status')
-            apply_date = request.query_params.get('apply_date')
-
-            if status:
-                applications = applications.filter(status=status)
-            if apply_date:
-                apply_date_datetime = timezone.datetime.fromisoformat(apply_date)
-                applications = applications.filter(apply_date__date=apply_date_datetime)
-
-        else:
-            return Response({"error": "Нет доступа к заявкам этого пользователя."}, status=status.HTTP_403_FORBIDDEN)
+        if status:
+            applications = applications.filter(status=status)
+        if apply_date:
+            apply_date_datetime = timezone.datetime.fromisoformat(apply_date)
+            applications = applications.filter(apply_date__date=apply_date_datetime)
 
         serializer = self.serializer_class(applications, many=True)
-        return Response(serializer.data)
+        return Response({'applications': serializer.data, 'creator': user_instance.username})
 
 
     def post(self, request, format=None):
         user_instance = user()
-        draft_application, created = Application.objects.get_or_create(user=user_instance, status='draft', defaults={'creation_date': timezone.now})
+        draft_application, created = SportApplication.objects.get_or_create(user=user_instance, status='draft', defaults={'creation_date': timezone.now})
         
         section_id = request.data.get('section_id')
         section = get_object_or_404(Section, pk=section_id, is_deleted=False)
@@ -157,8 +140,8 @@ class ApplicationList(APIView):
 class ApplicationDetail(APIView):
     section_class = Section
     section_serializer = SectionSerializer
-    application_class = Application
-    application_serializer = ApplicationSerializer
+    application_class = SportApplication
+    application_serializer = SportApplicationSerializer
 
     def get(self, request, application_id, format=None):
         application = get_object_or_404(self.application_class, pk=application_id)
@@ -190,8 +173,8 @@ class ApplicationDetail(APIView):
 
 
 class ApplicationSubmit(APIView):
-    model_class = Application
-    serializer_class = ApplicationSerializer
+    model_class = SportApplication
+    serializer_class = SportApplicationSerializer
 
     def put(self, request, application_id, format=None):
         application = get_object_or_404(self.model_class, pk=application_id)
@@ -202,8 +185,8 @@ class ApplicationSubmit(APIView):
     
 
 class ApplicationApproveReject(APIView):
-    model_class = Application
-    serializer_class = ApplicationSerializer
+    model_class = SportApplication
+    serializer_class = SportApplicationSerializer
 
     def put(self, request, application_id, format=None):
         user_instance = user()
@@ -232,14 +215,13 @@ class ApplicationApproveReject(APIView):
 
 
 class ApplicationPriority(APIView):
-    model_class = Application
-    serializer_class = ApplicationSerializer
+    model_class = SportApplication
+    serializer_class = SportApplicationSerializer
 
-    def delete(self, request, application_id, format=None):
+    def delete(self, request, application_id, section_id, format=None):
         application = get_object_or_404(self.model_class, pk=application_id)
-        section_id = request.data['section_id']
-        section = Section.objects.get(pk=section_id)
-        priority_to_delete = Priority.objects.get(application=application, section=section)
+        section = get_object_or_404(Section, pk=section_id)
+        priority_to_delete = get_object_or_404(Priority, application=application, section=section)
         priority_value = priority_to_delete.priority
         priority_to_delete.delete()
 
@@ -252,17 +234,16 @@ class ApplicationPriority(APIView):
 
         return Response({"message": "Приоритет удален"}, status=status.HTTP_204_NO_CONTENT)
     
-    def put(self, request, application_id, format=None):
+    def put(self, request, application_id, section_id, format=None):
         application = get_object_or_404(self.model_class, pk=application_id, status='draft')
-        section_id = request.data['section_id']
-        new_priority_value = request.data['priority_value']
-        section = Section.objects.get(pk=section_id)
+        section = get_object_or_404(Section, pk=section_id)
 
         priority_to_change = get_object_or_404(Priority, application=application, section=section)
-        priority_to_be_changed_with = get_object_or_404(Priority, application=application, priority=new_priority_value)
+        if priority_to_change.priority == 1: return Response({"error": "Приоритет уже максимальный"}, status=status.HTTP_400_BAD_REQUEST)
+        priority_to_be_changed_with = get_object_or_404(Priority, application=application, priority=priority_to_change.priority - 1)
 
         old_priority_value = priority_to_change.priority
-        priority_to_change.priority = new_priority_value
+        priority_to_change.priority = old_priority_value - 1
         priority_to_change.save()
 
         priority_to_be_changed_with.priority = old_priority_value
