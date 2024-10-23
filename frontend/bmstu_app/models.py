@@ -1,6 +1,38 @@
+from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin, UserManager
 from django.db import models
-from django.contrib.auth.models import User
 from django.utils import timezone
+
+
+class NewUserManager(UserManager):
+    def create_user(self, email, password=None, **extra_fields):
+        if not email:
+            raise ValueError('User must have an email address')
+        
+        email = self.normalize_email(email) 
+        user = self.model(email=email, **extra_fields) 
+        user.set_password(password)
+        user.save(using=self.db)
+        return user
+    
+    def create_superuser(self, email, password, **extra_fields):
+        if not email:
+            raise ValueError('User must have an email address')
+        
+        email = self.normalize_email(email) 
+        user = self.model(email=email, **extra_fields) 
+        user.set_password(password)
+        user.save(using=self.db)
+        return user
+
+class CustomUser(AbstractBaseUser, PermissionsMixin):
+    email = models.EmailField(("email адрес"), unique=True)
+    password = models.CharField(max_length=100, verbose_name="Пароль")    
+    is_staff = models.BooleanField(default=False, verbose_name="Является ли пользователь менеджером?")
+    is_superuser = models.BooleanField(default=False, verbose_name="Является ли пользователь админом?")
+
+    USERNAME_FIELD = 'email'
+
+    objects =  NewUserManager()
 
 
 class Section(models.Model):
@@ -34,8 +66,8 @@ class SportApplication(models.Model):
     apply_date = models.DateTimeField(null=True, blank=True)
     end_date = models.DateTimeField(null=True, blank=True)
 
-    user = models.ForeignKey(User, on_delete=models.CASCADE, null=False, related_name='user')
-    moderator = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='moderator')
+    user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, null=False, related_name='user')
+    moderator = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='moderator')
 
     full_name = models.CharField(max_length=100, null=True, blank=True)
     number_of_sections = models.IntegerField(null=True, blank=True)
@@ -44,7 +76,7 @@ class SportApplication(models.Model):
         db_table = 'application'
 
     def __str__(self):
-        return f"Application '{self.id}' by '{self.user.username}' created at '{self.creation_date}'"
+        return f"Application '{self.id}' by '{self.user.email}' created at '{self.creation_date}'"
 
 
 class Priority(models.Model):

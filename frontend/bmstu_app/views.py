@@ -1,25 +1,120 @@
-from django.shortcuts import get_object_or_404
+from bmstu_app.minio import add_pic, delete_pic
+from bmstu_app.models import Section, SportApplication, Priority, CustomUser
+from bmstu_app.permissions import IsAdmin, IsManager
+from bmstu_app.serializers import UserSerializer, SectionSerializer, SportApplicationSerializer
+from bmstu_app.schemas import section_response_schema, sport_application_response_schema
 
+from django.conf import settings
+from django.contrib.auth.models import User
+from django.contrib.auth import authenticate, login, logout
+from django.http import HttpResponse
+from django.shortcuts import get_object_or_404
+from django.utils import timezone
+from django.views.decorators.csrf import csrf_exempt
+
+from drf_yasg import openapi
+from drf_yasg.utils import swagger_auto_schema
+
+import redis
+
+from rest_framework import status, permissions, viewsets
+from rest_framework.decorators import api_view, permission_classes, authentication_classes
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
-from rest_framework import status, permissions
 from rest_framework.views import APIView
 
-from django.contrib.auth.models import User
-from bmstu_app.models import Section, SportApplication, Priority
-from bmstu_app.serializers import UserSerializer, SectionSerializer, SportApplicationSerializer
-
-from django.contrib.auth import authenticate, login, logout
-from bmstu_app.minio import add_pic, delete_pic
-
-from django.utils import timezone
+import uuid
 
 
-def user():
-    try:
-        user1 = User.objects.get(id=2) # id = 1 is superuser
-    except:
-        print("No such user")
-    return user1
+session_storage = redis.StrictRedis(host=settings.REDIS_HOST, port=settings.REDIS_PORT)
+
+
+@swagger_auto_schema(
+    operation_summary="Аутентификация",
+    method='post',
+    request_body=openapi.Schema(
+        type=openapi.TYPE_OBJECT,
+        properties={
+            'email': openapi.Schema(type=openapi.TYPE_STRING),
+            'password': openapi.Schema(type=openapi.TYPE_STRING),
+        },
+        required=['email', 'password']
+    ),
+)
+@api_view(['POST'])
+@permission_classes([AllowAny])
+@authentication_classes([])
+def login_view(request):
+    email = request.data["email"] 
+    password = request.data["password"]
+    user = authenticate(request, email=email, password=password)
+    if user is not None:
+        random_key = str(uuid.uuid4())
+        session_storage.set(random_key, user.pk)
+
+        response = HttpResponse("{'status': 'ok'}")
+        response.set_cookie("session_id", random_key)
+
+        return response
+    else:
+        return HttpResponse("{'status': 'error', 'error': 'login failed'}")
+
+@swagger_auto_schema(
+    method='post',
+    operation_summary="Деавторизация"
+)
+@api_view(['POST'])
+def logout_view(request):
+    logout(request)
+
+    return Response({'message': 'Success'}, status=status.HTTP_204_NO_CONTENT)
+
+
+class UserViewSet(viewsets.ModelViewSet):
+    """Класс, описывающий методы работы с пользователями
+    Осуществляет связь с таблицей пользователей в базе данных
+    """
+    queryset = CustomUser.objects.all()
+    serializer_class = UserSerializer
+    model_class = CustomUser
+
+    def get_permissions(self):
+        if self.action in ['create']:
+            permission_classes = [AllowAny]
+        elif self.action in ['list']:
+            permission_classes = [IsAdmin | IsManager]
+        else:
+            permission_classes = [IsAdmin]
+        return [permission() for permission in permission_classes]
+
+    @swagger_auto_schema(
+        operation_summary="Регистрация"
+    )
+    def create(self, request):
+        """
+        Функция регистрации новых пользователей
+        Если пользователя c указанным в request email ещё нет, в БД будет добавлен новый пользователь.
+        """
+        if self.model_class.objects.filter(email=request.data['email']).exists():
+            return Response({'status': 'Exist'}, status=400)
+        serializer = self.serializer_class(data=request.data)
+        if serializer.is_valid():
+            print(serializer.data)
+            self.model_class.objects.create_user(email=serializer.data['email'],
+                                     password=serializer.data['password'],
+                                     is_superuser=serializer.data['is_superuser'],
+                                     is_staff=serializer.data['is_staff'])
+            return Response({'status': 'Success'}, status=200)
+        return Response({'status': 'Error', 'error': serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+    
+def method_permission_classes(classes):
+    def decorator(func):
+        def decorated_func(self, *args, **kwargs):
+            self.permission_classes = classes        
+            self.check_permissions(self.request)
+            return func(self, *args, **kwargs)
+        return decorated_func
+    return decorator
 
 
 class SectionList(APIView):
@@ -28,6 +123,36 @@ class SectionList(APIView):
     application_class = SportApplication
     application_serializer = SportApplicationSerializer
 
+    @swagger_auto_schema(
+        operation_summary="Список секций",
+        manual_parameters=[
+            openapi.Parameter(
+                'section_title',
+                openapi.IN_QUERY,
+                type=openapi.TYPE_STRING
+            ),
+        ],
+        responses={
+            200: openapi.Response(
+                description="",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        'sections': openapi.Schema(
+                            type=openapi.TYPE_ARRAY,
+                            items=section_response_schema,
+                        ),
+                        'draft_application_id': openapi.Schema(
+                            type=openapi.TYPE_INTEGER
+                        ),
+                        'number_of_sections': openapi.Schema(
+                            type=openapi.TYPE_INTEGER
+                        ),
+                    }
+                )
+            )
+        }
+    )
     def get(self, request, format=None):
         sections = self.section_class.objects.filter(is_deleted=False)  
         section_title = request.query_params.get('section_title')
@@ -35,7 +160,14 @@ class SectionList(APIView):
             sections = sections.filter(title__icontains=section_title)      
         serializer = self.section_serializer(sections, many=True)
 
-        draft_application = self.application_class.objects.filter(user=user(), status='draft').first()
+        draft_application = None
+        ssid = request.COOKIES["session_id"]
+        if ssid is not None:
+            user_id = session_storage.get(ssid)
+            user_instance = CustomUser.objects.filter(pk=user_id).first()
+            if user_instance is not None:
+                draft_application = self.application_class.objects.filter(user=user_instance, status='draft').first()
+
         draft_application_id = 0
         number_of_sections = 0
         if draft_application is not None:
@@ -44,6 +176,9 @@ class SectionList(APIView):
 
         return Response({'sections': serializer.data, 'draft_application_id': draft_application_id, 'number_of_sections': number_of_sections})
 
+    @swagger_auto_schema(
+        operation_summary="Добавление секции"
+    )
     def post(self, request, format=None):
         serializer = self.section_serializer(data=request.data)
         if serializer.is_valid():
@@ -55,58 +190,129 @@ class SectionList(APIView):
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+@swagger_auto_schema(
+    method='get',
+    operation_summary="Одна секция"
+)
+@api_view(["Get"])
+def get_section_details(application, section_id, format=None):
+    section = get_object_or_404(Section, pk=section_id)
+    serializer = SectionSerializer(section)
+    return Response(serializer.data)
 
-class SectionDetail(APIView):
-    model_class = Section
-    serializer_class = SectionSerializer
-
-    def get(self, request, section_id, format=None):
-        section = get_object_or_404(self.model_class, pk=section_id)
-        serializer = self.serializer_class(section)
+@swagger_auto_schema(
+    operation_summary="Изменение секции",
+    method='put', 
+    request_body=SectionSerializer
+)
+@api_view(["PUT"])
+def change_section_details(application, section_id, format=None):
+    section = get_object_or_404(Section, pk=section_id)
+    serializer = SectionSerializer(section, data=application.data, partial=True)
+    if serializer.is_valid():
+        serializer.save()
         return Response(serializer.data)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-    def put(self, request, section_id, format=None):
-        section = get_object_or_404(self.model_class, pk=section_id)
-        serializer = self.serializer_class(section, data=request.data, partial=True)
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+@swagger_auto_schema(
+    method='delete',
+    operation_summary="Удаление секции"
+)
+@api_view(["Delete"])
+def delete_section(application, section_id, format=None):
+    section = get_object_or_404(Section, pk=section_id)
+    section.is_deleted = True
+    section.save()
+    pic_result = delete_pic(section_id)
+    if 'error' in pic_result.data:
+        return pic_result
+    return Response(status=status.HTTP_204_NO_CONTENT)
 
-    def delete(self, request, section_id, format=None):
-        section = get_object_or_404(self.model_class, pk=section_id)
-        section.is_deleted = True
-        section.save()
-        pic_result = delete_pic(section_id)
-        if 'error' in pic_result.data:
-            return pic_result
-        return Response(status=status.HTTP_204_NO_CONTENT)
-    
-    def post(self, request, section_id, format=None):
-        section = get_object_or_404(self.model_class, pk=section_id)
+@swagger_auto_schema(
+    method='post',
+    operation_summary="Добавление изображения"
+)
+@api_view(["Post"])
+def add_picture_for_section(application, section_id, format=None):
+    section = get_object_or_404(Section, pk=section_id)
 
-        new_image = request.FILES.get('image')
-        if not new_image:
-            return Response({"error": "Изображение не предоставлено."}, status=status.HTTP_400_BAD_REQUEST)
+    new_image = application.FILES.get('image')
+    if not new_image:
+        return Response({"error": "Изображение не предоставлено."}, status=status.HTTP_400_BAD_REQUEST)
 
-        delete_result = delete_pic(section_id)
-        if 'error' in delete_result.data:
-            return add_result
+    delete_result = delete_pic(section_id)
+    if 'error' in delete_result.data:
+        return add_result
 
-        add_result = add_pic(section, new_image)
-        if 'error' in add_result.data:
-            return add_result
+    add_result = add_pic(section, new_image)
+    if 'error' in add_result.data:
+        return add_result
 
-        return Response({"message": "Изображение успешно обновлено."}, status=status.HTTP_200_OK)
+    return Response({"message": "Изображение успешно обновлено."}, status=status.HTTP_200_OK)
 
 
 class ApplicationList(APIView):
     model_class = SportApplication
     serializer_class = SportApplicationSerializer
+    permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        operation_summary="Список заявок",
+        manual_parameters=[
+            openapi.Parameter(
+                'status',
+                openapi.IN_QUERY,
+                type=openapi.TYPE_STRING
+            ),
+            openapi.Parameter(
+                'apply_date',
+                openapi.IN_QUERY,
+                type=openapi.TYPE_STRING
+            )
+        ],
+        responses={
+            200: openapi.Response(
+                examples={
+                    'application/json': {
+                        'applications': [
+                            {
+                                "pk": 2,
+                                "status": "created",
+                                "creation_date": "2024-10-22T22:27:30Z",
+                                "apply_date": None,
+                                "end_date": None,
+                                "creator": "test@gmail.com",
+                                "moderator": "fix1in1it@gmail.com",
+                                "full_name": None,
+                                "number_of_sections": None
+                            }
+                        ]
+                    }
+                },
+                description="",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        'applications': openapi.Schema(
+                            type=openapi.TYPE_ARRAY,
+                            items=sport_application_response_schema,
+                        )
+                    }
+                )
+            )
+        }
+    )
     def get(self, request, format=None):
-        user_instance = user()        
-        applications = self.model_class.objects.filter(user=user_instance).exclude(status__in=['deleted', 'draft'])
+        applications = None
+        ssid = request.COOKIES["session_id"]
+        if ssid is not None:
+            user_id = session_storage.get(ssid)
+            user_instance = CustomUser.objects.filter(pk=user_id).first()
+            if user_instance is not None:
+                if user_instance.is_staff:
+                    applications = self.model_class.objects.all().exclude(status__in=['deleted', 'draft'])
+                else:
+                    applications = self.model_class.objects.filter(user=user_instance).exclude(status__in=['deleted', 'draft'])
 
         status = request.query_params.get('status')
         apply_date = request.query_params.get('apply_date')
@@ -118,12 +324,38 @@ class ApplicationList(APIView):
             applications = applications.filter(apply_date__date=apply_date_datetime)
 
         serializer = self.serializer_class(applications, many=True)
-        return Response({'applications': serializer.data, 'creator': user_instance.username})
+
+        return Response({'applications': serializer.data})
 
 
+class ApplicationDraft(APIView):
+    model_class = SportApplication
+    serializer_class = SportApplicationSerializer
+    
+    @swagger_auto_schema(
+        operation_summary="Добавление в заявку-черновик",
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            properties={
+                'section_id': openapi.Schema(type=openapi.TYPE_INTEGER)
+            },
+            required=['section_id']
+        ),
+        responses={
+            201: openapi.Response('Created'),
+            400: openapi.Response('Bad Request')
+        }
+    )
     def post(self, request, format=None):
-        user_instance = user()
-        draft_application, created = SportApplication.objects.get_or_create(user=user_instance, status='draft', defaults={'creation_date': timezone.now})
+        draft_application = None
+        ssid = request.COOKIES["session_id"]
+        if ssid is not None:
+            user_id = session_storage.get(ssid)
+            user_instance = CustomUser.objects.filter(pk=user_id).first()
+            if user_instance is not None:
+                draft_application, created = SportApplication.objects.get_or_create(user=user_instance, status='draft', defaults={'creation_date': timezone.now})
+            else:
+                return Response({"error": "No such user"}, status=status.HTTP_400_BAD_REQUEST)
         
         section_id = request.data.get('section_id')
         section = get_object_or_404(Section, pk=section_id, is_deleted=False)
@@ -143,6 +375,24 @@ class ApplicationDetail(APIView):
     application_class = SportApplication
     application_serializer = SportApplicationSerializer
 
+    @swagger_auto_schema(
+        operation_summary="Одна заявка",
+        responses={
+            200: openapi.Response(
+                description="",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        'application': sport_application_response_schema,
+                        'sections': openapi.Schema(
+                            type=openapi.TYPE_ARRAY,
+                            items=section_response_schema,
+                        )
+                    }
+                )
+            )
+        }
+    )
     def get(self, request, application_id, format=None):
         application = get_object_or_404(self.application_class, pk=application_id)
         serializer = self.application_serializer(application)
@@ -157,6 +407,10 @@ class ApplicationDetail(APIView):
 
         return Response({'application': serializer.data, 'sections': serialized_sections.data})
 
+    @swagger_auto_schema(
+        request_body=SportApplicationSerializer,
+        operation_summary="Изменение доп. полей заявки",
+    )
     def put(self, request, application_id, format=None):
         application = get_object_or_404(self.application_class, pk=application_id)
         serializer = self.application_serializer(application, data=request.data, partial=True)
@@ -165,6 +419,12 @@ class ApplicationDetail(APIView):
             return Response(serializer.data)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+    @swagger_auto_schema(
+        operation_summary="Удаление заявки",
+        responses={
+            204: openapi.Response('No Content'),
+        }
+    )
     def delete(self, request, application_id, format=None):
         application = get_object_or_404(self.application_class, pk=application_id)
         application.status = 'deleted'
@@ -176,25 +436,63 @@ class ApplicationSubmit(APIView):
     model_class = SportApplication
     serializer_class = SportApplicationSerializer
 
+    @swagger_auto_schema(
+        operation_summary="Сформировать создателем",
+        responses={
+            204: openapi.Response('No Content'),
+            400: openapi.Response('Bad Request')
+        }
+    )
     def put(self, request, application_id, format=None):
-        application = get_object_or_404(self.model_class, pk=application_id)
-        application.status = 'created'
-        application.apply_date = timezone.now().isoformat()
-        application.save()
-        return Response({"message": "Заявка сформирована"}, status=status.HTTP_204_NO_CONTENT)
+        ssid = request.COOKIES["session_id"]
+        if ssid is not None:
+            user_id = session_storage.get(ssid)
+            user_instance = CustomUser.objects.filter(pk=user_id).first()
+            if user_instance is None:
+                return Response({'error': 'No such user'}, status=status.HTTP_400_BAD_REQUEST)
+            else:
+                application = get_object_or_404(self.model_class, pk=application_id)
+                if application.user != user_instance:
+                    return Response({"error": "Заявка может быть сформирована только создателем"}, status=status.HTTP_400_BAD_REQUEST)
+                if application.status != 'draft':
+                    return Response({"error": "Заявка может быть сформирована только из статуса 'черновик'"}, status=status.HTTP_400_BAD_REQUEST)
+                application.status = 'created'
+                application.apply_date = timezone.now().isoformat()
+                application.save()
+                return Response({"message": "Заявка сформирована"}, status=status.HTTP_204_NO_CONTENT)
+        else:
+            return Response({'error': 'No user'}, status=status.HTTP_400_BAD_REQUEST)
     
 
 class ApplicationApproveReject(APIView):
     model_class = SportApplication
     serializer_class = SportApplicationSerializer
 
+    @swagger_auto_schema(
+        operation_summary="Завершить/отклонить модератором",
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            properties={
+                'status': openapi.Schema(type=openapi.TYPE_STRING, description="'completed' or 'rejected'")
+            },
+            required=['status']
+        ),
+        responses={
+            200: openapi.Response('Success', serializer_class),
+            400: openapi.Response('Bad Request')
+        }
+    )
+    @method_permission_classes([IsManager])
     def put(self, request, application_id, format=None):
-        user_instance = user()
-        if user_instance.is_staff == False:
-            return Response({'error': 'Текущий пользователь не является модератором'}, status=status.HTTP_403_FORBIDDEN)
+        ssid = request.COOKIES["session_id"]
+        if ssid is not None:
+            user_id = session_storage.get(ssid)
+            user_instance = CustomUser.objects.filter(pk=user_id).first()
+            if user_instance is None:
+                return Response({'error': 'No such user'}, status=status.HTTP_400_BAD_REQUEST)
         application = get_object_or_404(self.model_class, pk=application_id)
         if application.status != 'created':
-            return Response({'error': 'Заявка не может быть завершена до того, как перейдет в статус "Сформирована"'}, status=status.HTTP_403_FORBIDDEN)
+            return Response({'error': 'Заявка не может быть завершена до того, как перейдет в статус "Сформирована"'}, status=status.HTTP_400_BAD_REQUEST)
         application.status = request.data['status']
         application.moderator = user_instance
         application.end_date = timezone.now().isoformat()
@@ -215,11 +513,11 @@ class ApplicationApproveReject(APIView):
 
 
 class ApplicationPriority(APIView):
-    model_class = SportApplication
-    serializer_class = SportApplicationSerializer
-
+    @swagger_auto_schema(
+        operation_summary="Удалить секцию из заявки"
+    )
     def delete(self, request, application_id, section_id, format=None):
-        application = get_object_or_404(self.model_class, pk=application_id)
+        application = get_object_or_404(SportApplication, pk=application_id)
         section = get_object_or_404(Section, pk=section_id)
         priority_to_delete = get_object_or_404(Priority, application=application, section=section)
         priority_value = priority_to_delete.priority
@@ -234,8 +532,11 @@ class ApplicationPriority(APIView):
 
         return Response({"message": "Приоритет удален"}, status=status.HTTP_204_NO_CONTENT)
     
+    @swagger_auto_schema(
+        operation_summary="Уменьшить значение приоритета секции в заявке"
+    )
     def put(self, request, application_id, section_id, format=None):
-        application = get_object_or_404(self.model_class, pk=application_id, status='draft')
+        application = get_object_or_404(SportApplication, pk=application_id, status='draft')
         section = get_object_or_404(Section, pk=section_id)
 
         priority_to_change = get_object_or_404(Priority, application=application, section=section)
@@ -250,46 +551,3 @@ class ApplicationPriority(APIView):
         priority_to_be_changed_with.save()
 
         return Response({"message": "Приоритеты изменены"}, status=status.HTTP_204_NO_CONTENT)
-    
-
-class UserProfile(APIView):
-    model_class = User
-    serializer_class = UserSerializer
-
-    def put(self, request, format=None):
-        user_instance = user()
-        serializer = self.serializer_class(user_instance, data=request.data, partial=True)
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-    
-
-class UserLogin(APIView):    
-    def post(self, request, format=None):
-        username = request.data.get('username')
-        password = request.data.get('password')
-        user = authenticate(username=username, password=password)
-        if user is not None:
-            login(request, user)
-            return Response({"message": "Вход успешен."}, status=status.HTTP_200_OK)
-        return Response({"error": "Неверные данные."}, status=status.HTTP_401_UNAUTHORIZED)
-
-
-class UserRegistration(APIView):
-    serializer_class = UserSerializer
-    
-    def post(self, request, format=None):
-        serializer = self.serializer_class(data=request.data)
-        if serializer.is_valid():
-            serializer.save()
-            return Response({"message": "Регистрация успешна."}, status=status.HTTP_200_OK)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-    
-
-class UserLogout(APIView):
-    permission_classes = [permissions.IsAuthenticated]
-
-    def post(self, request, format=None):
-        logout(request)
-        return Response({"message": "Выход успешен."}, status=status.HTTP_200_OK)
