@@ -487,7 +487,6 @@ class ApplicationApproveReject(APIView):
             400: openapi.Response('Bad Request')
         }
     )
-    @method_permission_classes([IsManager])
     def put(self, request, application_id, format=None):
         ssid = request.COOKIES.get("session_id")
         if ssid is not None:
@@ -495,6 +494,8 @@ class ApplicationApproveReject(APIView):
             user_instance = CustomUser.objects.filter(pk=user_id).first()
             if user_instance is None:
                 return Response({'error': 'No such user'}, status=status.HTTP_400_BAD_REQUEST)
+            if user_instance.is_staff is False:
+                return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
         else:
             return Response({"error": "ssid is nil or empty."}, status=status.HTTP_403_FORBIDDEN)
         application = get_object_or_404(self.model_class, pk=application_id)
