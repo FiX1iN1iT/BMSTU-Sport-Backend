@@ -5,21 +5,19 @@ from bmstu_app.serializers import UserSerializer, SectionSerializer, SportApplic
 from bmstu_app.schemas import section_response_schema, sport_application_response_schema
 
 from django.conf import settings
-from django.contrib.auth.models import User
-from django.contrib.auth import authenticate, login, logout
+from django.contrib.auth import authenticate
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
-from django.views.decorators.csrf import csrf_exempt
 
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
 
 import redis
 
-from rest_framework import status, permissions, viewsets
-from rest_framework.decorators import api_view, permission_classes, authentication_classes
-from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework import status, viewsets
+from rest_framework.decorators import api_view
+from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -42,8 +40,6 @@ session_storage = redis.StrictRedis(host=settings.REDIS_HOST, port=settings.REDI
     ),
 )
 @api_view(['POST'])
-@permission_classes([AllowAny])
-@authentication_classes([])
 def login_view(request):
     email = request.data["email"] 
     password = request.data["password"]
@@ -65,9 +61,13 @@ def login_view(request):
 )
 @api_view(['POST'])
 def logout_view(request):
-    logout(request)
-
-    return Response({'message': 'Success'}, status=status.HTTP_204_NO_CONTENT)
+    session_id = request.COOKIES.get('session_id')
+    if session_id:
+        session_storage.delete(session_id)  # Удалите из вашего хранилища
+        response = Response({"message": "Вы вышли из системы."}, status=status.HTTP_200_OK)
+        response.delete_cookie("session_id")  # Удалите куку
+        return response
+    return Response({"error": "Необходима аутентификация."}, status=status.HTTP_401_UNAUTHORIZED)
 
 
 class UserViewSet(viewsets.ModelViewSet):
@@ -161,12 +161,14 @@ class SectionList(APIView):
         serializer = self.section_serializer(sections, many=True)
 
         draft_application = None
-        ssid = request.COOKIES["session_id"]
+        ssid = request.COOKIES.get("session_id")
         if ssid is not None:
             user_id = session_storage.get(ssid)
             user_instance = CustomUser.objects.filter(pk=user_id).first()
             if user_instance is not None:
                 draft_application = self.application_class.objects.filter(user=user_instance, status='draft').first()
+        else:
+            return Response({"error": "ssid is nil or empty."}, status=status.HTTP_403_FORBIDDEN)
 
         draft_application_id = 0
         number_of_sections = 0
@@ -254,7 +256,6 @@ def add_picture_for_section(application, section_id, format=None):
 class ApplicationList(APIView):
     model_class = SportApplication
     serializer_class = SportApplicationSerializer
-    permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
         operation_summary="Список заявок",
@@ -304,7 +305,7 @@ class ApplicationList(APIView):
     )
     def get(self, request, format=None):
         applications = None
-        ssid = request.COOKIES["session_id"]
+        ssid = request.COOKIES.get("session_id")
         if ssid is not None:
             user_id = session_storage.get(ssid)
             user_instance = CustomUser.objects.filter(pk=user_id).first()
@@ -313,12 +314,14 @@ class ApplicationList(APIView):
                     applications = self.model_class.objects.all().exclude(status__in=['deleted', 'draft'])
                 else:
                     applications = self.model_class.objects.filter(user=user_instance).exclude(status__in=['deleted', 'draft'])
+        else:
+            return Response({"error": "ssid is nil or empty."}, status=status.HTTP_403_FORBIDDEN)
 
-        status = request.query_params.get('status')
+        query_status = request.query_params.get('status')
         apply_date = request.query_params.get('apply_date')
 
-        if status:
-            applications = applications.filter(status=status)
+        if query_status:
+            applications = applications.filter(status=query_status)
         if apply_date:
             apply_date_datetime = timezone.datetime.fromisoformat(apply_date)
             applications = applications.filter(apply_date__date=apply_date_datetime)
@@ -348,7 +351,7 @@ class ApplicationDraft(APIView):
     )
     def post(self, request, format=None):
         draft_application = None
-        ssid = request.COOKIES["session_id"]
+        ssid = request.COOKIES.get("session_id")
         if ssid is not None:
             user_id = session_storage.get(ssid)
             user_instance = CustomUser.objects.filter(pk=user_id).first()
@@ -356,6 +359,8 @@ class ApplicationDraft(APIView):
                 draft_application, created = SportApplication.objects.get_or_create(user=user_instance, status='draft', defaults={'creation_date': timezone.now})
             else:
                 return Response({"error": "No such user"}, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            return Response({"error": "ssid is nil or empty."}, status=status.HTTP_403_FORBIDDEN)
         
         section_id = request.data.get('section_id')
         section = get_object_or_404(Section, pk=section_id, is_deleted=False)
@@ -444,7 +449,7 @@ class ApplicationSubmit(APIView):
         }
     )
     def put(self, request, application_id, format=None):
-        ssid = request.COOKIES["session_id"]
+        ssid = request.COOKIES.get("session_id")
         if ssid is not None:
             user_id = session_storage.get(ssid)
             user_instance = CustomUser.objects.filter(pk=user_id).first()
@@ -484,12 +489,14 @@ class ApplicationApproveReject(APIView):
     )
     @method_permission_classes([IsManager])
     def put(self, request, application_id, format=None):
-        ssid = request.COOKIES["session_id"]
+        ssid = request.COOKIES.get("session_id")
         if ssid is not None:
             user_id = session_storage.get(ssid)
             user_instance = CustomUser.objects.filter(pk=user_id).first()
             if user_instance is None:
                 return Response({'error': 'No such user'}, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            return Response({"error": "ssid is nil or empty."}, status=status.HTTP_403_FORBIDDEN)
         application = get_object_or_404(self.model_class, pk=application_id)
         if application.status != 'created':
             return Response({'error': 'Заявка не может быть завершена до того, как перейдет в статус "Сформирована"'}, status=status.HTTP_400_BAD_REQUEST)
