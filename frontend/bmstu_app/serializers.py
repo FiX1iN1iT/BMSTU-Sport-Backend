@@ -9,7 +9,7 @@ class UserSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = CustomUser
-        fields = ['email', 'password', 'is_staff', 'is_superuser']
+        fields = ['pk', 'email', 'password', 'is_staff', 'is_superuser', 'first_name', 'last_name']
 
 
 class SectionSerializer(serializers.ModelSerializer):

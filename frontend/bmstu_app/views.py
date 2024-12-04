@@ -48,10 +48,11 @@ def login_view(request):
         random_key = str(uuid.uuid4())
         session_storage.set(random_key, user.pk)
 
-        response = HttpResponse("{'status': 'ok'}")
+        serializer = UserSerializer(user)
+        response = Response(serializer.data, status=status.HTTP_200_OK)
         response.set_cookie("session_id", random_key)
-
         return response
+
     else:
         return HttpResponse("{'status': 'error', 'error': 'login failed'}")
 
@@ -79,7 +80,7 @@ class UserViewSet(viewsets.ModelViewSet):
     model_class = CustomUser
 
     def get_permissions(self):
-        if self.action in ['create']:
+        if self.action in ['create', 'update', 'retrieve']:
             permission_classes = [AllowAny]
         elif self.action in ['list']:
             permission_classes = [IsAdmin | IsManager]
@@ -99,13 +100,65 @@ class UserViewSet(viewsets.ModelViewSet):
             return Response({'status': 'Exist'}, status=400)
         serializer = self.serializer_class(data=request.data)
         if serializer.is_valid():
-            print(serializer.data)
-            self.model_class.objects.create_user(email=serializer.data['email'],
+            new_user = self.model_class.objects.create_user(email=serializer.data['email'],
                                      password=serializer.data['password'],
                                      is_superuser=serializer.data['is_superuser'],
                                      is_staff=serializer.data['is_staff'])
-            return Response({'status': 'Success'}, status=200)
+            response_data = serializer.data
+            response_data['id'] = new_user.id
+
+            print(response_data)
+            return Response(response_data, status=200)
         return Response({'status': 'Error', 'error': serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+    
+    @swagger_auto_schema(
+        operation_summary="Обновление данных пользователя"
+    )
+    def update(self, request, *args, **kwargs):
+        """
+        Функция обновления данных существующего пользователя.
+        Обновляет информацию пользователя по ID, переданному в URL.
+        """
+        ssid = request.COOKIES.get("session_id")
+        if ssid is not None:
+            user_id = session_storage.get(ssid)
+            user_instance = CustomUser.objects.filter(pk=user_id).first()
+            if user_instance is not None:
+                serializer = self.serializer_class(instance=user_instance, data=request.data, partial=True)
+                if serializer.is_valid():
+                    serializer.save()
+                    if 'password' in request.data:
+                        user_instance.set_password(request.data['password'])
+                    updated_user = self.serializer_class(user_instance)
+
+                    return Response(updated_user.data, status=status.HTTP_200_OK)
+                return Response({'status': 'Error', 'error': serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+            else:
+                return Response({"error": "No such user"}, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            return Response({"error": "ssid is nil or empty."}, status=status.HTTP_403_FORBIDDEN)
+
+    @swagger_auto_schema(
+        operation_summary="Получение данных пользователя"
+    )
+    def read(self, request, *args, **kwargs):
+        """
+        Метод для получения данных о пользователе по его ID.
+        """
+        ssid = request.COOKIES.get("session_id")
+        if ssid is not None:
+            user_id = session_storage.get(ssid)
+            user_instance = CustomUser.objects.filter(pk=user_id).first()
+            if user_instance is not None:
+                serializer = self.serializer_class(user_instance)
+                if serializer.is_valid():
+                    serializer.save()  # сохраняем обновленные данные
+                    return Response(serializer.data, status=status.HTTP_200_OK)
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            else:
+                return Response({"error": "No such user"}, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            return Response({"error": "ssid is nil or empty."}, status=status.HTTP_403_FORBIDDEN)
     
 def method_permission_classes(classes):
     def decorator(func):
@@ -167,8 +220,6 @@ class SectionList(APIView):
             user_instance = CustomUser.objects.filter(pk=user_id).first()
             if user_instance is not None:
                 draft_application = self.application_class.objects.filter(user=user_instance, status='draft').first()
-        else:
-            return Response({"error": "ssid is nil or empty."}, status=status.HTTP_403_FORBIDDEN)
 
         draft_application_id = 0
         number_of_sections = 0
@@ -220,7 +271,7 @@ def change_section_details(application, section_id, format=None):
     method='delete',
     operation_summary="Удаление секции"
 )
-@api_view(["Delete"])
+@api_view(["DELETE"])
 def delete_section(application, section_id, format=None):
     section = get_object_or_404(Section, pk=section_id)
     section.is_deleted = True
@@ -314,6 +365,8 @@ class ApplicationList(APIView):
                     applications = self.model_class.objects.all().exclude(status__in=['deleted', 'draft'])
                 else:
                     applications = self.model_class.objects.filter(user=user_instance).exclude(status__in=['deleted', 'draft'])
+            else:
+                return Response({"error": "no such user."}, status=status.HTTP_400_BAD_REQUEST)
         else:
             return Response({"error": "ssid is nil or empty."}, status=status.HTTP_403_FORBIDDEN)
 
@@ -371,7 +424,7 @@ class ApplicationDraft(APIView):
         current_priority = len(Priority.objects.filter(application=draft_application)) + 1
         Priority.objects.create(application=draft_application, section=section, priority=current_priority)
 
-        return Response({"message": "Секция добавлена в заявку"}, status=status.HTTP_201_CREATED)
+        return Response({"draft_application_id": draft_application.pk}, status=status.HTTP_201_CREATED)
 
 
 class ApplicationDetail(APIView):
