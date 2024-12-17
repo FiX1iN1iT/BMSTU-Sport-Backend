@@ -54,11 +54,13 @@ MIDDLEWARE = [
 ]
 
 CORS_ALLOWED_ORIGINS = [
-    'http://localhost:3000'
+    'http://localhost:3000',  # dev
+    'http://localhost:4173',  # preview
 ]
 CORS_ALLOW_CREDENTIALS = True
 CSRF_TRUSTED_ORIGINS = [
-    'http://localhost:3000'
+    'http://localhost:3000',  # dev
+    'http://localhost:4173',  # preview
 ]
 
 ROOT_URLCONF = 'bmstu_sport.urls'

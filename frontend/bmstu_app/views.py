@@ -6,12 +6,13 @@ from bmstu_app.schemas import section_response_schema, sport_application_respons
 
 from django.conf import settings
 from django.contrib.auth import authenticate
-from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
+
+import random
 
 import redis
 
@@ -49,12 +50,14 @@ def login_view(request):
         session_storage.set(random_key, user.pk)
 
         serializer = UserSerializer(user)
+
         response = Response(serializer.data, status=status.HTTP_200_OK)
         response.set_cookie("session_id", random_key)
+
         return response
 
     else:
-        return HttpResponse("{'status': 'error', 'error': 'login failed'}")
+        return Response(status=status.HTTP_400_BAD_REQUEST)
 
 @swagger_auto_schema(
     method='post',
@@ -64,11 +67,11 @@ def login_view(request):
 def logout_view(request):
     session_id = request.COOKIES.get('session_id')
     if session_id:
-        session_storage.delete(session_id)  # Удалите из вашего хранилища
-        response = Response({"message": "Вы вышли из системы."}, status=status.HTTP_200_OK)
-        response.delete_cookie("session_id")  # Удалите куку
+        session_storage.delete(session_id)
+        response = Response(status=status.HTTP_200_OK)
+        response.delete_cookie("session_id")
         return response
-    return Response({"error": "Необходима аутентификация."}, status=status.HTTP_401_UNAUTHORIZED)
+    return Response(status=status.HTTP_401_UNAUTHORIZED)
 
 
 class UserViewSet(viewsets.ModelViewSet):
@@ -120,23 +123,19 @@ class UserViewSet(viewsets.ModelViewSet):
         Обновляет информацию пользователя по ID, переданному в URL.
         """
         ssid = request.COOKIES.get("session_id")
-        if ssid is not None:
-            user_id = session_storage.get(ssid)
-            user_instance = CustomUser.objects.filter(pk=user_id).first()
-            if user_instance is not None:
-                serializer = self.serializer_class(instance=user_instance, data=request.data, partial=True)
-                if serializer.is_valid():
-                    serializer.save()
-                    if 'password' in request.data:
-                        user_instance.set_password(request.data['password'])
-                    updated_user = self.serializer_class(user_instance)
+        user_instance, error_response = get_user_from_session(ssid)
+        if error_response:
+            return error_response
 
-                    return Response(updated_user.data, status=status.HTTP_200_OK)
-                return Response({'status': 'Error', 'error': serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
-            else:
-                return Response({"error": "No such user"}, status=status.HTTP_400_BAD_REQUEST)
-        else:
-            return Response({"error": "ssid is nil or empty."}, status=status.HTTP_403_FORBIDDEN)
+        serializer = self.serializer_class(instance=user_instance, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            if 'password' in request.data:
+                user_instance.set_password(request.data['password'])
+            updated_user = self.serializer_class(user_instance)
+
+            return Response(updated_user.data, status=status.HTTP_200_OK)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     @swagger_auto_schema(
         operation_summary="Получение данных пользователя"
@@ -146,19 +145,15 @@ class UserViewSet(viewsets.ModelViewSet):
         Метод для получения данных о пользователе по его ID.
         """
         ssid = request.COOKIES.get("session_id")
-        if ssid is not None:
-            user_id = session_storage.get(ssid)
-            user_instance = CustomUser.objects.filter(pk=user_id).first()
-            if user_instance is not None:
-                serializer = self.serializer_class(user_instance)
-                if serializer.is_valid():
-                    serializer.save()  # сохраняем обновленные данные
-                    return Response(serializer.data, status=status.HTTP_200_OK)
-                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-            else:
-                return Response({"error": "No such user"}, status=status.HTTP_400_BAD_REQUEST)
-        else:
-            return Response({"error": "ssid is nil or empty."}, status=status.HTTP_403_FORBIDDEN)
+        user_instance, error_response = get_user_from_session(ssid)
+        if error_response:
+            return error_response
+        
+        serializer = self.serializer_class(user_instance)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
 def method_permission_classes(classes):
     def decorator(func):
@@ -215,11 +210,9 @@ class SectionList(APIView):
 
         draft_application = None
         ssid = request.COOKIES.get("session_id")
-        if ssid is not None:
-            user_id = session_storage.get(ssid)
-            user_instance = CustomUser.objects.filter(pk=user_id).first()
-            if user_instance is not None:
-                draft_application = self.application_class.objects.filter(user=user_instance, status='draft').first()
+        user_instance, error_response = get_user_from_session(ssid)
+        if user_instance:
+            draft_application = self.application_class.objects.filter(user=user_instance, status='draft').first()
 
         draft_application_id = 0
         number_of_sections = 0
@@ -235,11 +228,6 @@ class SectionList(APIView):
     def post(self, request, format=None):
         serializer = self.section_serializer(data=request.data)
         if serializer.is_valid():
-            section = serializer.save()
-            image = request.FILES.get("image")
-            pic_result = add_pic(section, image)
-            if 'error' in pic_result.data:
-                return pic_result
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -317,7 +305,12 @@ class ApplicationList(APIView):
                 type=openapi.TYPE_STRING
             ),
             openapi.Parameter(
-                'apply_date',
+                'start_apply_date',
+                openapi.IN_QUERY,
+                type=openapi.TYPE_STRING
+            ),
+            openapi.Parameter(
+                'end_apply_date',
                 openapi.IN_QUERY,
                 type=openapi.TYPE_STRING
             )
@@ -356,32 +349,33 @@ class ApplicationList(APIView):
     )
     def get(self, request, format=None):
         applications = None
+
         ssid = request.COOKIES.get("session_id")
-        if ssid is not None:
-            user_id = session_storage.get(ssid)
-            user_instance = CustomUser.objects.filter(pk=user_id).first()
-            if user_instance is not None:
-                if user_instance.is_staff:
-                    applications = self.model_class.objects.all().exclude(status__in=['deleted', 'draft'])
-                else:
-                    applications = self.model_class.objects.filter(user=user_instance).exclude(status__in=['deleted', 'draft'])
-            else:
-                return Response({"error": "no such user."}, status=status.HTTP_400_BAD_REQUEST)
+        user_instance, error_response = get_user_from_session(ssid)
+        if error_response:
+            return error_response
+
+        if user_instance.is_staff or user_instance.is_superuser:
+            applications = self.model_class.objects.all().exclude(status__in=['deleted', 'draft'])
         else:
-            return Response({"error": "ssid is nil or empty."}, status=status.HTTP_403_FORBIDDEN)
+            applications = self.model_class.objects.filter(user=user_instance).exclude(status__in=['deleted', 'draft'])
 
         query_status = request.query_params.get('status')
-        apply_date = request.query_params.get('apply_date')
+        start_apply_date = request.query_params.get('start_apply_date')
+        end_apply_date = request.query_params.get('end_apply_date')
 
         if query_status:
             applications = applications.filter(status=query_status)
-        if apply_date:
-            apply_date_datetime = timezone.datetime.fromisoformat(apply_date)
-            applications = applications.filter(apply_date__date=apply_date_datetime)
+        if start_apply_date:
+            start_apply_datetime = timezone.datetime.fromisoformat(start_apply_date)
+            applications = applications.filter(apply_date__date__gte=start_apply_datetime)
+        if end_apply_date:
+            end_apply_datetime = timezone.datetime.fromisoformat(end_apply_date)
+            applications = applications.filter(apply_date__date__lte=end_apply_datetime)
 
         serializer = self.serializer_class(applications, many=True)
 
-        return Response({'applications': serializer.data})
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
 
 class ApplicationDraft(APIView):
@@ -404,16 +398,13 @@ class ApplicationDraft(APIView):
     )
     def post(self, request, format=None):
         draft_application = None
+
         ssid = request.COOKIES.get("session_id")
-        if ssid is not None:
-            user_id = session_storage.get(ssid)
-            user_instance = CustomUser.objects.filter(pk=user_id).first()
-            if user_instance is not None:
-                draft_application, created = SportApplication.objects.get_or_create(user=user_instance, status='draft', defaults={'creation_date': timezone.now})
-            else:
-                return Response({"error": "No such user"}, status=status.HTTP_400_BAD_REQUEST)
-        else:
-            return Response({"error": "ssid is nil or empty."}, status=status.HTTP_403_FORBIDDEN)
+        user_instance, error_response = get_user_from_session(ssid)
+        if error_response:
+            return error_response
+        
+        draft_application, created = SportApplication.objects.get_or_create(user=user_instance, status='draft', defaults={'creation_date': timezone.now})
         
         section_id = request.data.get('section_id')
         section = get_object_or_404(Section, pk=section_id, is_deleted=False)
@@ -453,6 +444,15 @@ class ApplicationDetail(APIView):
     )
     def get(self, request, application_id, format=None):
         application = get_object_or_404(self.application_class, pk=application_id)
+
+        ssid = request.COOKIES.get("session_id")
+        user_instance, error_response = get_user_from_session(ssid)
+        if error_response:
+            return error_response
+
+        if (application.user != user_instance) and (user_instance.is_staff is False):
+            return Response(status=status.HTTP_403_FORBIDDEN)
+
         serializer = self.application_serializer(application)
 
         priorities = Priority.objects.filter(application=application).order_by('priority')
@@ -503,23 +503,20 @@ class ApplicationSubmit(APIView):
     )
     def put(self, request, application_id, format=None):
         ssid = request.COOKIES.get("session_id")
-        if ssid is not None:
-            user_id = session_storage.get(ssid)
-            user_instance = CustomUser.objects.filter(pk=user_id).first()
-            if user_instance is None:
-                return Response({'error': 'No such user'}, status=status.HTTP_400_BAD_REQUEST)
-            else:
-                application = get_object_or_404(self.model_class, pk=application_id)
-                if application.user != user_instance:
-                    return Response({"error": "Заявка может быть сформирована только создателем"}, status=status.HTTP_400_BAD_REQUEST)
-                if application.status != 'draft':
-                    return Response({"error": "Заявка может быть сформирована только из статуса 'черновик'"}, status=status.HTTP_400_BAD_REQUEST)
-                application.status = 'created'
-                application.apply_date = timezone.now().isoformat()
-                application.save()
-                return Response({"message": "Заявка сформирована"}, status=status.HTTP_204_NO_CONTENT)
-        else:
-            return Response({'error': 'No user'}, status=status.HTTP_400_BAD_REQUEST)
+        user_instance, error_response = get_user_from_session(ssid)
+        if error_response:
+            return error_response
+
+        application = get_object_or_404(self.model_class, pk=application_id)
+        if application.user != user_instance:
+            return Response({"error": "Заявка может быть сформирована только создателем"}, status=status.HTTP_400_BAD_REQUEST)
+        if application.status != 'draft':
+            return Response({"error": "Заявка может быть сформирована только из статуса 'черновик'"}, status=status.HTTP_400_BAD_REQUEST)
+        application.status = 'created'
+        application.apply_date = timezone.now().isoformat()
+        application.save()
+
+        return Response({"message": "Заявка сформирована"}, status=status.HTTP_204_NO_CONTENT)
     
 
 class ApplicationApproveReject(APIView):
@@ -542,20 +539,15 @@ class ApplicationApproveReject(APIView):
     )
     def put(self, request, application_id, format=None):
         ssid = request.COOKIES.get("session_id")
-        if ssid is not None:
-            user_id = session_storage.get(ssid)
-            user_instance = CustomUser.objects.filter(pk=user_id).first()
-            if user_instance is None:
-                return Response({'error': 'No such user'}, status=status.HTTP_400_BAD_REQUEST)
-            if user_instance.is_staff is False:
-                return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
-        else:
-            return Response({"error": "ssid is nil or empty."}, status=status.HTTP_403_FORBIDDEN)
+        moderator_instance, error_response = get_moderator_from_session(ssid)
+        if error_response:
+            return error_response
+
         application = get_object_or_404(self.model_class, pk=application_id)
         if application.status != 'created':
-            return Response({'error': 'Заявка не может быть завершена до того, как перейдет в статус "Сформирована"'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'error': 'Заявка может быть завершена или отклонена только из статуса "Сформирована"'}, status=status.HTTP_400_BAD_REQUEST)
         application.status = request.data['status']
-        application.moderator = user_instance
+        application.moderator = moderator_instance
         application.end_date = timezone.now().isoformat()
 
         priorities = Priority.objects.filter(application=application)
@@ -564,6 +556,8 @@ class ApplicationApproveReject(APIView):
         for priority in priorities:
             if priority.section.is_deleted == False:
                 counter += 1
+                priority.classroom = str(random.randint(100, 999))
+                priority.save()
 
         application.number_of_sections = counter
 
@@ -591,7 +585,16 @@ class ApplicationPriority(APIView):
                 priority.priority -= 1
                 priority.save()
 
-        return Response({"message": "Приоритет удален"}, status=status.HTTP_204_NO_CONTENT)
+        serializer = SportApplicationSerializer(application)
+
+        sorted_priorities = Priority.objects.filter(application=application).order_by('priority')
+        sorted_sections = []
+        for priority in sorted_priorities:
+            if priority.section.is_deleted == False:
+                sorted_sections.append(priority.section)
+        serialized_sections = SectionSerializer(sorted_sections, many=True)
+
+        return Response({'application': serializer.data, 'sections': serialized_sections.data}, status=status.HTTP_200_OK)
     
     @swagger_auto_schema(
         operation_summary="Уменьшить значение приоритета секции в заявке"
@@ -611,4 +614,37 @@ class ApplicationPriority(APIView):
         priority_to_be_changed_with.priority = old_priority_value
         priority_to_be_changed_with.save()
 
-        return Response({"message": "Приоритеты изменены"}, status=status.HTTP_204_NO_CONTENT)
+        serializer = SportApplicationSerializer(application)
+
+        sorted_priorities = Priority.objects.filter(application=application).order_by('priority')
+        sorted_sections = []
+        for priority in sorted_priorities:
+            if priority.section.is_deleted == False:
+                sorted_sections.append(priority.section)
+        serialized_sections = SectionSerializer(sorted_sections, many=True)
+
+        return Response({'application': serializer.data, 'sections': serialized_sections.data}, status=status.HTTP_200_OK)
+
+
+def get_user_from_session(ssid):
+    if ssid is None:
+        return None, Response(status=status.HTTP_403_FORBIDDEN)
+
+    user_id = session_storage.get(ssid)
+    user_instance = CustomUser.objects.filter(pk=user_id).first()
+
+    if user_instance is None:
+        return None, Response(status=status.HTTP_400_BAD_REQUEST)
+
+    return user_instance, None
+
+def get_moderator_from_session(ssid):
+    user_instance, error_response = get_user_from_session(ssid)
+
+    if error_response:
+        return None, error_response
+
+    if user_instance.is_staff or user_instance.is_superuser:
+        return user_instance, None
+
+    return None, Response(status=status.HTTP_403_FORBIDDEN)

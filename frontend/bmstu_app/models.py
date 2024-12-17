@@ -87,10 +87,11 @@ class Priority(models.Model):
     section = models.ForeignKey(Section, on_delete=models.CASCADE)
 
     priority = models.IntegerField()
+    classroom = models.CharField(null=True, blank=True)
 
     class Meta:
         db_table = 'priority'
         unique_together = ('application', 'section')
 
     def __str__(self):
-        return f"Priority '{self.id}' in '{self.application}' of '{self.section}' = '{self.priority}'"
+        return f"M-M #'{self.id}' in '{self.application}' of '{self.section}': priority = '{self.priority}', classroom = '{self.classroom}'"
