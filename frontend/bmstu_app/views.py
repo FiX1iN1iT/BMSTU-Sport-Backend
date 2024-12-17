@@ -440,6 +440,8 @@ class ApplicationDetail(APIView):
         sections = []
         for priority in priorities:
             if priority.section.is_deleted == False:
+                if (application.status == 'completed' or application.status == 'rejected') and not (':' in priority.section.location):
+                    priority.section.location = priority.section.location + ": " + priority.classroom + " аудитория"
                 sections.append(priority.section)
         serialized_sections = self.section_serializer(sections, many=True)
 
@@ -450,7 +452,7 @@ class ApplicationDetail(APIView):
         operation_summary="Изменение доп. полей заявки",
     )
     def put(self, request, application_id, format=None):
-        ssid = application.COOKIES.get("session_id")
+        ssid = request.COOKIES.get("session_id")
         user_instance, error_response = get_user_from_session(ssid)
         if error_response:
             return error_response
@@ -472,7 +474,7 @@ class ApplicationDetail(APIView):
         }
     )
     def delete(self, request, application_id, format=None):
-        ssid = application.COOKIES.get("session_id")
+        ssid = request.COOKIES.get("session_id")
         user_instance, error_response = get_user_from_session(ssid)
         if error_response:
             return error_response
@@ -565,7 +567,7 @@ class ApplicationPriority(APIView):
         operation_summary="Удалить секцию из заявки"
     )
     def delete(self, request, application_id, section_id, format=None):
-        ssid = application.COOKIES.get("session_id")
+        ssid = request.COOKIES.get("session_id")
         user_instance, error_response = get_user_from_session(ssid)
         if error_response:
             return error_response
@@ -602,7 +604,7 @@ class ApplicationPriority(APIView):
         operation_summary="Уменьшить значение приоритета секции в заявке"
     )
     def put(self, request, application_id, section_id, format=None):
-        ssid = application.COOKIES.get("session_id")
+        ssid = request.COOKIES.get("session_id")
         user_instance, error_response = get_user_from_session(ssid)
         if error_response:
             return error_response
