@@ -1,6 +1,5 @@
 from bmstu_app.minio import add_pic, delete_pic
 from bmstu_app.models import Section, SportApplication, Priority, CustomUser
-from bmstu_app.permissions import IsAdmin, IsManager
 from bmstu_app.serializers import UserSerializer, SectionSerializer, SportApplicationSerializer
 from bmstu_app.schemas import section_response_schema, sport_application_response_schema
 
@@ -65,31 +64,18 @@ def login_view(request):
 )
 @api_view(['POST'])
 def logout_view(request):
-    session_id = request.COOKIES.get('session_id')
-    if session_id:
-        session_storage.delete(session_id)
+    ssid = request.COOKIES.get('session_id')
+    if ssid:
+        session_storage.delete(ssid)
         response = Response(status=status.HTTP_200_OK)
         response.delete_cookie("session_id")
         return response
-    return Response(status=status.HTTP_401_UNAUTHORIZED)
+    return Response(status=status.HTTP_403_FORBIDDEN)
 
 
 class UserViewSet(viewsets.ModelViewSet):
-    """Класс, описывающий методы работы с пользователями
-    Осуществляет связь с таблицей пользователей в базе данных
-    """
-    queryset = CustomUser.objects.all()
     serializer_class = UserSerializer
     model_class = CustomUser
-
-    def get_permissions(self):
-        if self.action in ['create', 'update', 'retrieve']:
-            permission_classes = [AllowAny]
-        elif self.action in ['list']:
-            permission_classes = [IsAdmin | IsManager]
-        else:
-            permission_classes = [IsAdmin]
-        return [permission() for permission in permission_classes]
 
     @swagger_auto_schema(
         operation_summary="Регистрация"
@@ -100,7 +86,7 @@ class UserViewSet(viewsets.ModelViewSet):
         Если пользователя c указанным в request email ещё нет, в БД будет добавлен новый пользователь.
         """
         if self.model_class.objects.filter(email=request.data['email']).exists():
-            return Response({'status': 'Exist'}, status=400)
+            return Response({'error': 'Пользователь с таким email уже существует.'}, status=status.HTTP_400_BAD_REQUEST)
         serializer = self.serializer_class(data=request.data)
         if serializer.is_valid():
             new_user = self.model_class.objects.create_user(email=serializer.data['email'],
@@ -136,33 +122,6 @@ class UserViewSet(viewsets.ModelViewSet):
 
             return Response(updated_user.data, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-    @swagger_auto_schema(
-        operation_summary="Получение данных пользователя"
-    )
-    def read(self, request, *args, **kwargs):
-        """
-        Метод для получения данных о пользователе по его ID.
-        """
-        ssid = request.COOKIES.get("session_id")
-        user_instance, error_response = get_user_from_session(ssid)
-        if error_response:
-            return error_response
-        
-        serializer = self.serializer_class(user_instance)
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data, status=status.HTTP_200_OK)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-    
-def method_permission_classes(classes):
-    def decorator(func):
-        def decorated_func(self, *args, **kwargs):
-            self.permission_classes = classes        
-            self.check_permissions(self.request)
-            return func(self, *args, **kwargs)
-        return decorated_func
-    return decorator
 
 
 class SectionList(APIView):
@@ -216,18 +175,24 @@ class SectionList(APIView):
 
         draft_application_id = 0
         number_of_sections = 0
-        if draft_application is not None:
+        if draft_application:
             draft_application_id = draft_application.id
             number_of_sections = len(Priority.objects.filter(application=draft_application))
 
-        return Response({'sections': serializer.data, 'draft_application_id': draft_application_id, 'number_of_sections': number_of_sections})
+        return Response({'sections': serializer.data, 'draft_application_id': draft_application_id, 'number_of_sections': number_of_sections}, status=status.HTTP_200_OK)
 
     @swagger_auto_schema(
         operation_summary="Добавление секции"
     )
     def post(self, request, format=None):
+        ssid = request.COOKIES.get("session_id")
+        moderator_instance, error_response = get_moderator_from_session(ssid)
+        if error_response:
+            return error_response
+
         serializer = self.section_serializer(data=request.data)
         if serializer.is_valid():
+            serializer.save()
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -248,6 +213,11 @@ def get_section_details(application, section_id, format=None):
 )
 @api_view(["PUT"])
 def change_section_details(application, section_id, format=None):
+    ssid = application.COOKIES.get("session_id")
+    moderator_instance, error_response = get_moderator_from_session(ssid)
+    if error_response:
+        return error_response
+
     section = get_object_or_404(Section, pk=section_id)
     serializer = SectionSerializer(section, data=application.data, partial=True)
     if serializer.is_valid():
@@ -261,6 +231,11 @@ def change_section_details(application, section_id, format=None):
 )
 @api_view(["DELETE"])
 def delete_section(application, section_id, format=None):
+    ssid = application.COOKIES.get("session_id")
+    moderator_instance, error_response = get_moderator_from_session(ssid)
+    if error_response:
+        return error_response
+
     section = get_object_or_404(Section, pk=section_id)
     section.is_deleted = True
     section.save()
@@ -275,6 +250,11 @@ def delete_section(application, section_id, format=None):
 )
 @api_view(["Post"])
 def add_picture_for_section(application, section_id, format=None):
+    ssid = application.COOKIES.get("session_id")
+    moderator_instance, error_response = get_moderator_from_session(ssid)
+    if error_response:
+        return error_response
+
     section = get_object_or_404(Section, pk=section_id)
 
     new_image = application.FILES.get('image')
@@ -470,7 +450,15 @@ class ApplicationDetail(APIView):
         operation_summary="Изменение доп. полей заявки",
     )
     def put(self, request, application_id, format=None):
+        ssid = application.COOKIES.get("session_id")
+        user_instance, error_response = get_user_from_session(ssid)
+        if error_response:
+            return error_response
+
         application = get_object_or_404(self.application_class, pk=application_id)
+        if application.user != user_instance:
+            return Response(status=status.HTTP_403_FORBIDDEN)
+
         serializer = self.application_serializer(application, data=request.data, partial=True)
         if serializer.is_valid():
             serializer.save()
@@ -484,6 +472,11 @@ class ApplicationDetail(APIView):
         }
     )
     def delete(self, request, application_id, format=None):
+        ssid = application.COOKIES.get("session_id")
+        user_instance, error_response = get_user_from_session(ssid)
+        if error_response:
+            return error_response
+
         application = get_object_or_404(self.application_class, pk=application_id)
         application.status = 'deleted'
         application.save()
@@ -572,7 +565,16 @@ class ApplicationPriority(APIView):
         operation_summary="Удалить секцию из заявки"
     )
     def delete(self, request, application_id, section_id, format=None):
+        ssid = application.COOKIES.get("session_id")
+        user_instance, error_response = get_user_from_session(ssid)
+        if error_response:
+            return error_response
+
         application = get_object_or_404(SportApplication, pk=application_id)
+
+        if application.user != user_instance:
+            return Response(status=status.HTTP_403_FORBIDDEN)
+
         section = get_object_or_404(Section, pk=section_id)
         priority_to_delete = get_object_or_404(Priority, application=application, section=section)
         priority_value = priority_to_delete.priority
@@ -600,7 +602,16 @@ class ApplicationPriority(APIView):
         operation_summary="Уменьшить значение приоритета секции в заявке"
     )
     def put(self, request, application_id, section_id, format=None):
+        ssid = application.COOKIES.get("session_id")
+        user_instance, error_response = get_user_from_session(ssid)
+        if error_response:
+            return error_response
+
         application = get_object_or_404(SportApplication, pk=application_id, status='draft')
+
+        if application.user != user_instance:
+            return Response(status=status.HTTP_403_FORBIDDEN)
+
         section = get_object_or_404(Section, pk=section_id)
 
         priority_to_change = get_object_or_404(Priority, application=application, section=section)
