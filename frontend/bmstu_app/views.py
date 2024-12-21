@@ -97,8 +97,8 @@ class UserViewSet(viewsets.ModelViewSet):
             response_data['id'] = new_user.id
 
             print(response_data)
-            return Response(response_data, status=200)
-        return Response({'status': 'Error', 'error': serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(response_data, status=status.HTTP_200_OK)
+        return Response(serializer.error, status=status.HTTP_400_BAD_REQUEST)
     
     @swagger_auto_schema(
         operation_summary="Обновление данных пользователя"
@@ -118,6 +118,7 @@ class UserViewSet(viewsets.ModelViewSet):
             serializer.save()
             if 'password' in request.data:
                 user_instance.set_password(request.data['password'])
+                user_instance.save()
             updated_user = self.serializer_class(user_instance)
 
             return Response(updated_user.data, status=status.HTTP_200_OK)
@@ -547,14 +548,16 @@ class ApplicationApproveReject(APIView):
 
         priorities = Priority.objects.filter(application=application)
 
-        counter = 0
+        unique_classrooms = []
         for priority in priorities:
             if priority.section.is_deleted == False:
-                counter += 1
-                priority.classroom = str(random.randint(100, 999))
+                new_classroom = str(random.randint(100, 999))
+                priority.classroom = new_classroom
+                unique_classrooms.append(new_classroom)
                 priority.save()
 
-        application.number_of_sections = counter
+        unique_classrooms = set(unique_classrooms)
+        application.number_of_sections = len(unique_classrooms)
 
         application.save()
         serializer = self.serializer_class(application)
