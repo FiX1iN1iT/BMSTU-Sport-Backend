@@ -356,7 +356,7 @@ class ApplicationList(APIView):
 
         serializer = self.serializer_class(applications, many=True)
 
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        return Response({ 'applications': serializer.data }, status=status.HTTP_200_OK)
 
 
 class ApplicationDraft(APIView):
@@ -396,7 +396,7 @@ class ApplicationDraft(APIView):
         current_priority = len(Priority.objects.filter(application=draft_application)) + 1
         Priority.objects.create(application=draft_application, section=section, priority=current_priority)
 
-        return Response({"draft_application_id": draft_application.pk}, status=status.HTTP_201_CREATED)
+        return Response({"draft_application_id": draft_application.pk, "number_of_sections": current_priority}, status=status.HTTP_200_OK)
 
 
 class ApplicationDetail(APIView):
@@ -461,6 +461,9 @@ class ApplicationDetail(APIView):
         application = get_object_or_404(self.application_class, pk=application_id)
         if application.user != user_instance:
             return Response(status=status.HTTP_403_FORBIDDEN)
+        
+        if application.status != 'draft':
+            return Response(status=status.HTTP_400_BAD_REQUEST)
 
         serializer = self.application_serializer(application, data=request.data, partial=True)
         if serializer.is_valid():
@@ -620,7 +623,8 @@ class ApplicationPriority(APIView):
         section = get_object_or_404(Section, pk=section_id)
 
         priority_to_change = get_object_or_404(Priority, application=application, section=section)
-        if priority_to_change.priority == 1: return Response({"error": "Приоритет уже максимальный"}, status=status.HTTP_400_BAD_REQUEST)
+        if priority_to_change.priority == 1:
+            return Response({"error": "Приоритет уже максимальный"}, status=status.HTTP_400_BAD_REQUEST)
         priority_to_be_changed_with = get_object_or_404(Priority, application=application, priority=priority_to_change.priority - 1)
 
         old_priority_value = priority_to_change.priority
