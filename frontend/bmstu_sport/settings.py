@@ -40,10 +40,16 @@ INSTALLED_APPS = [
     'bmstu_app',
     'rest_framework',
     'drf_yasg',
-    'corsheaders'
+    'corsheaders',
+    'graphene_django',
 ]
 
+GRAPHENE = {
+    'SCHEMA': 'bmstu_app.schema.schema'
+}
+
 MIDDLEWARE = [
+    'bmstu_app.middleware.AddResponseMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',

@@ -1,9 +1,15 @@
-from django.contrib import admin
-from django.urls import path, include
 from bmstu_app import views
-from rest_framework import routers, permissions
-from drf_yasg.views import get_schema_view
+
+from django.contrib import admin
+from django.http import JsonResponse
+from django.urls import path, include
+
 from drf_yasg import openapi
+from drf_yasg.views import get_schema_view
+
+from graphene_django.views import GraphQLView
+
+from rest_framework import routers, permissions
 
 schema_view = get_schema_view(
    openapi.Info(
@@ -21,7 +27,26 @@ schema_view = get_schema_view(
 router = routers.DefaultRouter()
 router.register(r'user', views.UserViewSet, basename='user')
 
+class CustomGraphQLView(GraphQLView):
+    def execute_graphql_request(self, request, *args, **kwargs):
+        # Ensure request.response exists and is valid
+        if not hasattr(request, "response"):
+            request.response = JsonResponse({})
+        return super().execute_graphql_request(request, *args, **kwargs)
+
+    def get_response(self, request, data, show_graphiql=False):
+        response = super().get_response(request, data, show_graphiql)
+
+        # Ensure request.response is a proper HttpResponse
+        if hasattr(request, "response") and not isinstance(request.response, tuple):
+            for cookie in request.response.cookies.values():
+                response.cookies[cookie.key] = cookie
+        return response
+
 urlpatterns = [
+    # GraphQL
+    path("graphql", CustomGraphQLView.as_view(graphiql=True)),
+
     # Админка
     path('admin/', admin.site.urls),
 
@@ -52,10 +77,4 @@ urlpatterns = [
 
     # Домен м-м
     path(r'applications/<int:application_id>/priority/<int:section_id>', views.ApplicationPriority.as_view(), name='application-priority'),
-
-    # Домен Пользователь
-    # path(r'register/', views.UserRegistration.as_view(), name='user-registration'),
-    # path(r'profile/', views.UserProfile.as_view(), name='user-profile'),
-    # path(r'login/', views.UserLogin.as_view(), name='user-login'),
-    # path(r'logout/', views.UserLogout.as_view(), name='user-logout'),
 ]
