@@ -162,10 +162,12 @@ class SectionList(APIView):
         }
     )
     def get(self, request, format=None):
-        sections = self.section_class.objects.filter(is_deleted=False)  
+        sections = self.section_class.objects.filter(is_deleted=False)
         section_title = request.query_params.get('section_title')
         if section_title:
-            sections = sections.filter(title__icontains=section_title)      
+            sections = sections.filter(title__icontains=section_title)   
+
+        sections = sections.order_by('pk')   
         serializer = self.section_serializer(sections, many=True)
 
         draft_application = None
@@ -243,7 +245,12 @@ def delete_section(application, section_id, format=None):
     pic_result = delete_pic(section_id)
     if 'error' in pic_result.data:
         return pic_result
-    return Response(status=status.HTTP_204_NO_CONTENT)
+    
+    sections = Section.objects.filter(is_deleted=False)
+    sections = sections.order_by('pk')   
+    serializer = SectionSerializer(sections, many=True)
+
+    return Response(serializer.data, status=status.HTTP_204_NO_CONTENT)
 
 @swagger_auto_schema(
     method='post',
