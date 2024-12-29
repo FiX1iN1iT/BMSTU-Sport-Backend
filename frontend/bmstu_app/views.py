@@ -354,6 +354,7 @@ class ApplicationList(APIView):
             end_apply_datetime = timezone.datetime.fromisoformat(end_apply_date)
             applications = applications.filter(apply_date__date__lte=end_apply_datetime)
 
+        applications = applications.order_by('pk')
         serializer = self.serializer_class(applications, many=True)
 
         return Response({ 'applications': serializer.data }, status=status.HTTP_200_OK)
@@ -549,18 +550,18 @@ class ApplicationApproveReject(APIView):
         application.moderator = moderator_instance
         application.end_date = timezone.now().isoformat()
 
-        priorities = Priority.objects.filter(application=application)
+        if application.status == 'completed':
+            priorities = Priority.objects.filter(application=application)
+            unique_classrooms = []
+            for priority in priorities:
+                if priority.section.is_deleted == False:
+                    new_classroom = str(random.randint(100, 999))
+                    priority.classroom = new_classroom
+                    unique_classrooms.append(new_classroom)
+                    priority.save()
 
-        unique_classrooms = []
-        for priority in priorities:
-            if priority.section.is_deleted == False:
-                new_classroom = str(random.randint(100, 999))
-                priority.classroom = new_classroom
-                unique_classrooms.append(new_classroom)
-                priority.save()
-
-        unique_classrooms = set(unique_classrooms)
-        application.number_of_sections = len(unique_classrooms)
+            unique_classrooms = set(unique_classrooms)
+            application.number_of_sections = len(unique_classrooms)
 
         application.save()
         serializer = self.serializer_class(application)
